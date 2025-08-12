@@ -1,0 +1,36 @@
+[package]
+name = "sumac_rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = {version = "1.0.219", features = ["derive"]}
+thiserror = "2.0.12"
+tls_codec = { version = "0.4.1", features = ["derive", "serde", "mls"] }
+
+openmls = {path = "../openmls/openmls", features=["crypto-debug", "sumac"]}
+openmls_basic_credential = {path = "../openmls/basic_credential", features=["clonable"]}
+openmls_rust_crypto = {path = "../openmls/openmls_rust_crypto"}
+openmls_traits = { version = "0.4.0", path = "../openmls/traits" }
+log = "0.4.27"
+fmt = "0.1.0"
+criterion = "0.5.1"
+either = "1.15.0"
+rand = "0.9.2"
+
+[features]
+test-utils = []
+
+
+[[bench]]
+name = "bench_sumac"
+harness = false
+
+# [[bench]]
+# name = "bench_tmka"
+# harness = false
+
+# [[bench]]
+# name = "bench_cgka"
+# harness = false
+
