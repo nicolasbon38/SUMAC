@@ -1144,5 +1144,5 @@ fn benchmark_remove_user(c: &mut Criterion) {
 }
 
 
-criterion_group!(bench_sumac, /*benchmark_add_admin, benchmark_add_user, benchmark_update_user, */benchmark_remove_user);
+criterion_group!(bench_sumac, benchmark_add_admin, benchmark_add_user, benchmark_update_user, benchmark_remove_user);
 criterion_main!(bench_sumac);

@@ -27,7 +27,7 @@ name = "bench_sumac"
 harness = false
 
 
-#[[bench]]
-#name = "bench_cgka"
-#harness = false
+[[bench]]
+name = "bench_cgka"
+harness = false
 
