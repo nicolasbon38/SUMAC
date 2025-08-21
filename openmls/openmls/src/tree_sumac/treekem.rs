@@ -83,7 +83,7 @@ where
         let resolved_path = path.iter().zip(copath_resolutions.iter());
 
         resolved_path
-            .map(|(node, resolution)| node.encrypt(crypto, ciphersuite, resolution))
+            .map(|(node, resolution)| {node.encrypt(crypto, ciphersuite, resolution)})
             .collect::<Result<Vec<UpdatePathNode<P::Node>>, LibraryError>>()
     }
 

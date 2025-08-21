@@ -6,9 +6,7 @@ use openmls::{
         nodes::{
             encryption_keys::KeyPairRef,
             traits::{OptionNode, White},
-        },
-        treekem::UpdatePath,
-        LeafNodeTMKA, ParentNodeTMKA,
+        }, treekem::UpdatePath, LeafNodeTMKA, OptionLeafNodeTMKA, ParentNodeTMKA
     },
 };
 use openmls_traits::OpenMlsProvider;
@@ -79,35 +77,34 @@ impl TmkaAdminGroup {
                     .ok_or(SumacError::TrueSumacError(
                         "Leaf to be removed not found".to_owned(),
                     ))?;
-                diff.blank_leaf(leaf_index);
+                diff.just_replace_leaf(OptionLeafNodeTMKA::blank(), leaf_index);
                 (leaf_index, None)
             }
-            Operation::Update(_) => {
-                todo!()
-                // let leaf_index = self
-                //     .tree
-                //     .leaves()
-                //     .find_map(|(index, leaf)| {
-                //         leaf.node().clone().and_then(|actual_leaf| {
-                //             if actual_leaf.credential().serialized_content()
-                //                 == Into::<Credential>::into(user.credential().clone())
-                //                     .serialized_content()
-                //             {
-                //                 Some(index)
-                //             } else {
-                //                 None
-                //             }
-                //         })
-                //     })
-                //     .ok_or(SumacError::TrueSumacError(
-                //         "Leaf to be removed not found".to_owned(),
-                //     ))?;
+            Operation::Update(user) => {
+                let leaf_index = self
+                    .tree
+                    .leaves()
+                    .find_map(|(index, leaf)| {
+                        leaf.node().clone().and_then(|actual_leaf| {
+                            if actual_leaf.credential().serialized_content()
+                                == Into::<Credential>::into(user.credential().clone())
+                                    .serialized_content()
+                            {
+                                Some(index)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .ok_or(SumacError::TrueSumacError(
+                        "Leaf to be removed not found".to_owned(),
+                    ))?;
 
 
-                // let new_leaf_secret = Secret::random(ciphersuite, provider.rand())?;
-                // let new_leaf_node = LeafNodeTMKA::new(provider.crypto(), ciphersuite, user.credential().clone().into(), new_leaf_secret.into()).map_err(|err| SumacError::MLSError(err))?;
+                let new_leaf_secret = Secret::random(ciphersuite, provider.rand())?;
+                let new_leaf_node = LeafNodeTMKA::new(provider.crypto(), ciphersuite, user.credential().clone().into(), new_leaf_secret.into()).map_err(|err| SumacError::MLSError(err))?;
                 
-                // (leaf_index, Some(new_leaf_node))
+                (leaf_index, Some(new_leaf_node))
             }
         };
         //         // Derive and apply an update path on the direct path of the new leaf
@@ -131,7 +128,7 @@ impl TmkaAdminGroup {
                 provider.crypto(),
                 ciphersuite,
                 &plain_path,
-                &HashSet::new(), // no exclusion list in this case I think
+                &HashSet::from_iter(vec![target_leaf_index].iter()), // no exclusion list in this case I think
                 target_leaf_index,
             )
             .expect("Encryption of the path failed");
@@ -161,7 +158,7 @@ impl TmkaAdminGroup {
             .merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
 
         let welcome = match op {
-            Operation::Add(user) => {
+            Operation::Add(user) | Operation::Update(user) => {
                 // Here, we are sure that there is a new leaf
                 let new_leaf = new_leaf.unwrap();
                 //Puis dans le process_welcome on remplacera les noeuds du path par les secrets dérivés
@@ -180,7 +177,7 @@ impl TmkaAdminGroup {
                     encrypted_leaf_secret,
                     public_tree,
                 })
-            }
+            },
             _ => None,
         };
 

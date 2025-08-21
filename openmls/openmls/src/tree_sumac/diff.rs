@@ -651,6 +651,27 @@ impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA>{
     }
 
 
+     pub fn decrypt_first_path_secret_from_update_path_with_own_key(
+        &mut self,
+        crypto : &impl OpenMlsCrypto,
+        ciphersuite : Ciphersuite,
+        encrypted_path_secrets: &Vec<Vec<u8>>,
+        own_leaf_index : LeafNodeIndex
+    ) -> PathSecret{
+        let encrypted_path_secret = encrypted_path_secrets.get(0).unwrap();
+
+        // this function is lonly used in a symmetric context: so encryption key = decryption key
+        let binding = self.diff.leaf(own_leaf_index).node().clone().expect("why is the leaf empty ?");
+        let decryption_key = binding.encryption_key();
+
+        let path_secret = decryption_key
+            .decrypt(crypto, ciphersuite, encrypted_path_secret)
+            .unwrap();
+
+        PathSecret::from(Secret::from_slice(&path_secret.as_slice()))
+
+    }
+
 
     /// Generate a regeneration path, by deriving the path secret of each node
     pub fn generate_regeneration_path(

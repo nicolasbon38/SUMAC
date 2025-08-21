@@ -131,99 +131,24 @@ fn process_broadcast_tmka(
     broadcast: CommitTMKABroadcast,
     provider: &impl OpenMlsProvider,
     ciphersuite: Ciphersuite,
+    target_username: Option<String>,
 ) -> Result<(), SumacError> {
     // process the broadcast
-    all_users_groups.iter_mut().for_each(|(_, group)| {
-        group
-            .forest_mut()
-            .get_mut(identifier_admin_committer)
-            .unwrap()
-            .process(&broadcast, provider, ciphersuite)
-            .unwrap()
-    });
-    Ok(())
-}
-
-fn process_regeneration_procedure_admin(
-    provider: &impl OpenMlsProvider,
-    ciphersuite: Ciphersuite,
-    all_admins_group: &mut HashMap<String, SumacAdminGroup>,
-    all_users: &HashMap<String, User>,
-    regeneration_set: &RegenerationSet,
-    username_committer: &String,
-    username_new_user: &String,
-) -> Result<
-    HashMap<
-        String,
-        (
-            TreeTMKA,
-            HpkeCiphertext,
-            EncryptedCombinedPath,
-        ),
-    >,
-    SumacError,
-> {
-    let mut welcome_new_user_sumac = HashMap::new();
-
-    let new_user = all_users.get(username_new_user).unwrap();
-
-    all_admins_group
+    all_users_groups
         .iter_mut()
-        .filter(|(username, _)| *username != username_committer)
-        .for_each(|(username, admin_group)| {
-            let index: LeafNodeIndex = admin_group.tmka_mut().add_placeholder_leaf(ciphersuite); // useful so the layout of the path secret match
-            assert_eq!(index, regeneration_set.leaf_index());
-            let regenerated_secrets = admin_group.tmka_mut().absorb_regeneration_path(
-                provider,
-                ciphersuite,
-                &regeneration_set,
-            );
-            // Now, add the actual leaf
-            // sample a random leaf secret
-            let leaf_secret = Secret::random(ciphersuite, provider.rand()).unwrap();
-
-            //replace the placeholder by a new node containing this new secret.
-            let new_leaf_node = LeafNodeTMKA::new(
-                provider.crypto(),
-                ciphersuite,
-                new_user.credential_with_key().credential.clone(),
-                leaf_secret.clone().into(),
-            )
-            .expect("Impossible to create the new leaf node");
-
-            admin_group.tmka_mut().replace_leaf(index, new_leaf_node);
-
-            // encrypt the leaf secret and the regenerated secrets under the public key of the new_usrer
-
-            let encrypted_leaf_secret = hpke_encrypt_secret(
-                provider,
-                ciphersuite,
-                &leaf_secret,
-                new_user.encryption_keypair().unwrap().public_key(),
-            ).unwrap();
-
-
-            let encrypted_combined_path = regenerated_secrets
-                .encrypt_hpke(
-                    provider,
-                    ciphersuite,
-                    new_user.encryption_keypair().unwrap().public_key(),
-                )
-                .unwrap();
-
-            let public_tree = admin_group.tmka().generate_white_tree(ciphersuite);
-
-            welcome_new_user_sumac.insert(
-                username.clone(),
-                (
-                    public_tree,
-                    encrypted_leaf_secret,
-                    encrypted_combined_path,
-                ),
-            );
+        .filter(|(username, _)| match &target_username {
+            Some(actual_username) => actual_username != *username,
+            None => true,
+        })
+        .for_each(|(_, group)| {
+            group
+                .forest_mut()
+                .get_mut(identifier_admin_committer)
+                .unwrap()
+                .process(&broadcast, provider, ciphersuite)
+                .unwrap()
         });
-
-    Ok(welcome_new_user_sumac)
+    Ok(())
 }
 
 impl TmkaAdminGroup {

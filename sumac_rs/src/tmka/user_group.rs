@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
 use openmls::prelude::{ParentNodeIndex, Secret as MlsSecret};
+use openmls::tree_sumac::nodes::traits::OptionNode;
+use openmls::tree_sumac::OptionLeafNodeTMKA;
 use openmls::{
     error::LibraryError,
     prelude::{Ciphersuite, LeafNodeIndex, PathSecret},
@@ -60,10 +62,10 @@ impl TmkaSlaveGroup {
                 assert_eq!(new_index, *updated_leaf_index);
             }
             Operation::Remove(_) => {
-               // diff.blank_leaf(*updated_leaf_index);     // must be done at the end : do not change the structure of the tree berfore decryption
+               // nothing to do !
             }
             Operation::Update(_) => {
-                todo!()
+                // nothing to do!
             },
         }
 
@@ -85,12 +87,64 @@ impl TmkaSlaveGroup {
         diff.process_update_path(*updated_leaf_index, path).map_err(|err| SumacError::MLSError(err))?;
 
         match operation{
-            Operation::Remove(_) => diff.blank_leaf(*updated_leaf_index),
-           _ => {},
+            Operation::Remove(user) => diff.just_replace_leaf(OptionLeafNodeTMKA::blank(), *updated_leaf_index),
+            _ =>{}
         }
 
         self.tree
             .merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
+        Ok(())
+    }
+
+    pub fn process_self_update(
+        &mut self,
+        commit: CommitTMKAUnicast,
+        provider: &impl OpenMlsProvider,
+        ciphersuite: Ciphersuite,
+    ) -> Result<(), SumacError> {
+        let CommitTMKAUnicast {
+            own_leaf_node_index,
+            encrypted_leaf_secret,
+            public_tree: _,
+        } = commit;
+
+        assert_eq!(own_leaf_node_index, self.own_leaf_index);
+
+        // Start by decrypting the secret
+        let leaf_secret = hpke_decrypt_secret(
+            provider,
+            ciphersuite,
+            &encrypted_leaf_secret,
+            self.user.encryption_keypair()?.private_key(),
+        )?;
+
+        let new_leaf_node = LeafNodeTMKA::new(
+            provider.crypto(),
+            ciphersuite,
+            self.user.credential_with_key().credential.clone(),
+            leaf_secret.clone().into(),
+        )
+        .map_err(|err| SumacError::MLSError(err))?;
+
+
+        let mut diff = self.tree.empty_diff();
+   
+        diff.just_replace_leaf(new_leaf_node.clone().into(), self.own_leaf_index);
+        
+        let path_indices = diff.filtered_direct_path(own_leaf_node_index);
+
+        let path_secret = PathSecret::from(MlsSecret::from(leaf_secret.into())).derive_path_secret(provider.crypto(), ciphersuite).unwrap();
+
+        let (path, _, _, commit_secret) =
+            ParentNodeTMKA::derive_path(provider.crypto(), ciphersuite, path_secret, path_indices)
+                .map_err(|err| SumacError::MLSError(err))?;
+
+        diff.process_update_path(own_leaf_node_index, path)
+            .expect("Failed to update path");
+
+        self.tree.merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
+        self.commit_secret = commit_secret.secret().clone().into();
+
         Ok(())
     }
 
@@ -134,7 +188,7 @@ impl TmkaSlaveGroup {
 
         let path_secret = PathSecret::from(MlsSecret::from(leaf_secret.into())).derive_path_secret(provider.crypto(), ciphersuite).unwrap();
 
-        let (path, _, owned_keys, commit_secret) =
+        let (path, _, _, commit_secret) =
             ParentNodeTMKA::derive_path(provider.crypto(), ciphersuite, path_secret, path_indices)
                 .map_err(|err| SumacError::MLSError(err))?;
 
@@ -149,7 +203,7 @@ impl TmkaSlaveGroup {
             user: user.clone(),
             commit_secret: commit_secret.secret().into()
         })
-    }
+    } 
 }
 
 

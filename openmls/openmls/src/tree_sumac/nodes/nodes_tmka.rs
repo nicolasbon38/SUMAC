@@ -222,6 +222,14 @@ pub struct ParentNodeTMKA {
     pub(super) unmerged_leaves: UnmergedLeaves,
 }
 
+impl fmt::Debug for ParentNodeTMKA{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.path_secret.clone().map_or(0, |secret| secret.path_secret.as_slice()[0]))
+    }
+}
+
+
+
 impl ParentNodeTMKA {
     pub fn path_secret(&self) -> &Option<PathSecret>{
         &self.path_secret

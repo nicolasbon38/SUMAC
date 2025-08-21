@@ -15,8 +15,8 @@ use crate::{
     },
     errors::SumacError,
     sumac::{
-        process_broadcast_tmka, process_regeneration_procedure_admin,
-        regeneration::{EncryptedCombinedPath, EncryptedRegenerationSet},
+        process_broadcast_tmka,
+        regeneration::{EncryptedCombinedPath, EncryptedRegenerationSet, RegenerationSet},
         setup_sumac, SumacAdminGroup, SumacUserGroup,
     },
     test_utils::{check_sync_sumac, setup_provider, CIPHERSUITE},
@@ -24,6 +24,90 @@ use crate::{
     user::User,
     Operation,
 };
+
+
+fn admins_process_regeneration_procedure_add_user(
+    provider: &impl OpenMlsProvider,
+    ciphersuite: Ciphersuite,
+    all_admins_group: &mut HashMap<String, SumacAdminGroup>,
+    all_users: &HashMap<String, User>,
+    regeneration_set: &RegenerationSet,
+    username_committer: &String,
+    username_new_user: &String,
+) -> Result<
+    HashMap<
+        String,
+        (
+            TreeTMKA,
+            HpkeCiphertext,
+            EncryptedCombinedPath,
+        ),
+    >,
+    SumacError,
+> {
+    let mut welcome_new_user_sumac = HashMap::new();
+
+    let new_user = all_users.get(username_new_user).unwrap();
+
+    all_admins_group
+        .iter_mut()
+        .filter(|(username, _)| *username != username_committer)
+        .for_each(|(username, admin_group)| {
+            let index: LeafNodeIndex = admin_group.tmka_mut().add_placeholder_leaf(ciphersuite); // useful so the layout of the path secret match
+            assert_eq!(index, regeneration_set.leaf_index());
+            let regenerated_secrets = admin_group.tmka_mut().absorb_regeneration_path(
+                provider,
+                ciphersuite,
+                &regeneration_set,
+            );
+            // Now, add the actual leaf
+            // sample a random leaf secret
+            let leaf_secret = Secret::random(ciphersuite, provider.rand()).unwrap();
+
+            //replace the placeholder by a new node containing this new secret.
+            let new_leaf_node = LeafNodeTMKA::new(
+                provider.crypto(),
+                ciphersuite,
+                new_user.credential_with_key().credential.clone(),
+                leaf_secret.clone().into(),
+            )
+            .expect("Impossible to create the new leaf node");
+
+            admin_group.tmka_mut().replace_leaf(index, new_leaf_node);
+
+            // encrypt the leaf secret and the regenerated secrets under the public key of the new_usrer
+
+            let encrypted_leaf_secret = hpke_encrypt_secret(
+                provider,
+                ciphersuite,
+                &leaf_secret,
+                new_user.encryption_keypair().unwrap().public_key(),
+            ).unwrap();
+
+
+            let encrypted_combined_path = regenerated_secrets
+                .encrypt_hpke(
+                    provider,
+                    ciphersuite,
+                    new_user.encryption_keypair().unwrap().public_key(),
+                )
+                .unwrap();
+
+            let public_tree = admin_group.tmka().generate_white_tree(ciphersuite);
+
+            welcome_new_user_sumac.insert(
+                username.clone(),
+                (
+                    public_tree,
+                    encrypted_leaf_secret,
+                    encrypted_combined_path,
+                ),
+            );
+        });
+
+    Ok(welcome_new_user_sumac)
+}
+
 
 pub fn add_user_committer(
     provider: &impl OpenMlsProvider,
@@ -105,7 +189,7 @@ pub fn add_user_other_admins(
     );
 
     // absorb it in their own TMKA tree. They output their regenerated path (as well as their dumb ratchet tree to give the layout to the new user)
-    let welcome_new_user = process_regeneration_procedure_admin(
+    let welcome_new_user = admins_process_regeneration_procedure_add_user(
         provider,
         ciphersuite,
         all_admin_groups,
@@ -133,6 +217,7 @@ pub fn add_user_standard_users(
         commit_broadcast_tmka,
         provider,
         ciphersuite,
+        None    // the group of the new user have not been created yet
     )?;
 
     //The standard users (but the new one) do all the regeneration process by themselves.

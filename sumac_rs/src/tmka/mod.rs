@@ -75,6 +75,12 @@ pub struct CommitTMKABroadcast {
     operation: Operation,
 }
 
+impl CommitTMKABroadcast{
+    pub fn target_leaf_index(&self) -> &LeafNodeIndex{
+        &self.updated_leaf_index
+    }
+}
+
 pub struct CommitTMKAUnicast {
     own_leaf_node_index: LeafNodeIndex,
     encrypted_leaf_secret: HpkeCiphertext,
@@ -152,74 +158,78 @@ fn test_tmka() {
             }
         });
 
-    // for _ in 0..n_users - 1{
-    //     let username_to_update = all_user_groups.keys().choose(&mut rng).unwrap().clone();
-    //     let user_to_update = all_users.get(&username_to_update).unwrap();
+    for _ in 0..n_users - 1{
+        let username_to_update = all_user_groups.keys().choose(&mut rng).unwrap().clone();
+        let user_to_update = all_users.get(&username_to_update).unwrap();
 
-    //     println!("Updating {username_to_update}");
-    //     let (broadcast, _) = admin_group.commit(
-    //         Operation::Update(user_to_update.clone()),
-    //         CIPHERSUITE,
-    //         &provider,
-    //     ).unwrap();
+        println!("Updating {username_to_update}");
+        let (broadcast, unicast) = admin_group.commit(
+            Operation::Update(user_to_update.clone()),
+            CIPHERSUITE,
+            &provider,
+        ).unwrap();
 
-    //     process_broadcast_tmka(
-    //         &mut all_user_groups,
-    //         broadcast,
-    //         None,
-    //         &provider,
-    //         CIPHERSUITE,
-    //     ).unwrap();
+        process_broadcast_tmka(
+            &mut all_user_groups,
+            broadcast,
+            Some(&username_to_update),
+            &provider,
+            CIPHERSUITE,
+        ).unwrap();
 
-    //     let check = check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>());
-    //     if !check{
-    //         println!("Final state of all the trees");
-    //         admin_group.print_debug("view of admin:");
-    //         all_user_groups.iter().for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
-    //         panic!() 
-    //     }
-    // }
+        //process update on the target
+        all_user_groups.get_mut(&username_to_update).unwrap().process_self_update(unicast.unwrap(), &provider, CIPHERSUITE).unwrap();
 
-    // for _ in (0..n_users - 3) {
-    //     let username_to_delete = all_user_groups.keys().choose(&mut rng).unwrap().clone();
-    //     println!("Removing {username_to_delete}");
-    //     let user_to_delete = all_users.get(&username_to_delete).unwrap();
 
-    //     let (broadcast, _) = admin_group
-    //         .commit(
-    //             Operation::Remove(user_to_delete.clone()),
-    //             CIPHERSUITE,
-    //             &provider,
-    //         )
-    //         .unwrap();
+        let check = check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>());
+        if !check{
+            println!("Final state of all the trees");
+            admin_group.print_debug("view of admin:");
+            all_user_groups.iter().for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
+            panic!() 
+        }
+    }
 
-    //     process_broadcast_tmka(
-    //         &mut all_user_groups,
-    //         broadcast,
-    //         Some(&username_to_delete),
-    //         &provider,
-    //         CIPHERSUITE,
-    //     )
-    //     .unwrap();
+    for _ in (0..n_users - 3) {
+        let username_to_delete = all_user_groups.keys().choose(&mut rng).unwrap().clone();
+        println!("Removing {username_to_delete}");
+        let user_to_delete = all_users.get(&username_to_delete).unwrap();
 
-    //     all_user_groups.remove(&username_to_delete);
+        let (broadcast, _) = admin_group
+            .commit(
+                Operation::Remove(user_to_delete.clone()),
+                CIPHERSUITE,
+                &provider,
+            )
+            .unwrap();
 
-    //     let check = check_sync_tmka(
-    //         &admin_group,
-    //         all_user_groups
-    //             .iter()
-    //             .map(|(_, group)| group)
-    //             .collect::<Vec<_>>(),
-    //     );
-    //     if !check {
-    //         println!("Final state of all the trees");
-    //         admin_group.print_debug("view of admin:");
-    //         all_user_groups
-    //             .iter()
-    //             .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
-    //         panic!()
-    //     }
-    // }
+        process_broadcast_tmka(
+            &mut all_user_groups,
+            broadcast,
+            Some(&username_to_delete),
+            &provider,
+            CIPHERSUITE,
+        )
+        .unwrap();
+
+        all_user_groups.remove(&username_to_delete);
+
+        let check = check_sync_tmka(
+            &admin_group,
+            all_user_groups
+                .iter()
+                .map(|(_, group)| group)
+                .collect::<Vec<_>>(),
+        );
+        if !check {
+            println!("Final state of all the trees");
+            admin_group.print_debug("view of admin:");
+            all_user_groups
+                .iter()
+                .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
+            panic!()
+        }
+    }
 }
 
 pub fn generate_random_tmka(
@@ -338,14 +348,15 @@ fn test_create_large_tmka() {
     
 
 
-    // let username_to_delete = format!("User_3");
-    // let user_to_delete = all_users.get(&username_to_delete).unwrap();
+    let username_to_delete = format!("User_3");
+    let user_to_delete = all_users.get(&username_to_delete).unwrap();
 
-    // let (commit_broadcast, _) = admin_group.commit(Operation::Remove(user_to_delete.clone()), CIPHERSUITE,  &provider).unwrap();
+    let (commit_broadcast, _) = admin_group.commit(Operation::Remove(user_to_delete.clone()), CIPHERSUITE,  &provider).unwrap();
+    process_broadcast_tmka(&mut all_user_groups, commit_broadcast, Some("User_3"), &provider, CIPHERSUITE).unwrap();
+    all_user_groups.remove(&username_to_delete);
 
-    // process_broadcast_tmka(&mut all_user_groups, commit_broadcast, Some("User_3"), &provider, CIPHERSUITE).unwrap();
 
-    // assert!(check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>()));
+    assert!(check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>()));
 
 
 
