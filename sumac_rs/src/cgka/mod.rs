@@ -1,6 +1,7 @@
 use openmls::treesync::node::parent_node::UnmergedLeaves;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::time::Instant;
 
 use openmls::ciphersuite::{self, Secret as MlsSecret};
 use openmls::error::LibraryError;
@@ -573,7 +574,7 @@ impl CGKAGroup {
 fn test_create_large_cgka() {
     let mut rng = rng();
 
-    let n_users = 20;
+    let n_users = 1000;
     let provider = setup_provider();
     let mut all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
 
@@ -593,11 +594,22 @@ fn test_create_large_cgka() {
     let new_user = create_user(new_username.clone(), &provider);
     all_users.insert(new_username.clone(), new_user.clone());
 
+    let start = Instant::now();
     let (commit_broadcast, commit_unicast) = all_groups.get_mut(&committer_name).unwrap().commit(Operation::Add(new_user.clone()), CIPHERSUITE,  &provider).unwrap();
-
+    let stop = start.elapsed();
+    println!("Committer:{stop:?}");
+    
+    let start = Instant::now();
     process_broadcast_cgka(&mut all_groups, commit_broadcast, &committer_name, None, &provider, CIPHERSUITE).unwrap();
+    let stop = start.elapsed();
+    println!("Broadcast:{stop:?}");
 
+
+    let start = Instant::now();
     let new_group = CGKAGroup::process_welcome(commit_unicast.unwrap(), &provider, CIPHERSUITE, &new_user).unwrap();
+    let stop = start.elapsed();
+    println!("New Groupt:{stop:?}");
+
 
     all_groups.insert(new_username, new_group);
 

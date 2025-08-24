@@ -93,7 +93,7 @@ pub fn process_broadcast_cgka(
 ) -> Result<(), SumacError> {
     for (username, group) in all_groups.iter_mut() {
         if username != committer && username != target.unwrap_or("default") {
-            println!("-------processing {username}. Committer is {committer}-----");
+            // println!("-------processing {username}. Committer is {committer}-----");
             group.process(&broadcast, provider, ciphersuite)?;
         }
     }

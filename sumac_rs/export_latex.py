@@ -2,8 +2,10 @@ import os
 import json
 import pandas as pd
 
+ROOT_BENCHMARK = "target/criterion"
+
 def compute_table(system, operation):
-    base = f"results/criterion/{system}/{operation}"
+    base = f"{ROOT_BENCHMARK}/{operation}_{system}"
     records = []
 
     for root, dirs, files in os.walk(base):
@@ -11,11 +13,11 @@ def compute_table(system, operation):
             bench_name = os.path.relpath(root, base)
 
             # Only keep benchmarks that end with "new"
-            if not bench_name.endswith("new"):
+            if not bench_name.endswith("base"):
                 continue
 
             # Remove the trailing "/new"
-            clean_name = bench_name.rsplit("/new", 1)[0]
+            clean_name = bench_name.rsplit("/base", 1)[0]
 
             path = os.path.join(root, "estimates.json")
             with open(path) as f:
@@ -61,8 +63,8 @@ def compute_table(system, operation):
         f.write(table.to_latex(float_format="%.2f"))
 
 BENCHES = {
-    "cgka": ["add_user_cgka", "remove_user_cgka", "update_user_cgka"],
-    "sumac": ["add-admin_sumac", "add-user_sumac", "remove-user_sumac", "update-user_sumac"]
+    "cgka": ["add-user", "remove_user", "update_user"],
+    "sumac": ["add-admin", "add-user", "remove-user", "update-user"]
 }
 
 if __name__ == "__main__":
