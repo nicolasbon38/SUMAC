@@ -210,7 +210,7 @@ fn benchmark_add_user(c: &mut Criterion) {
 
             // -------- Other Admin --------
             group.bench_with_input(
-                BenchmarkId::from_parameter(format!("Other_Admin:{}-{}", n_admins, n_users)),
+                BenchmarkId::from_parameter(format!("Other Admin:{}-{}", n_admins, n_users)),
                 &n_users,
                 |b, &_n| {
                     b.iter_custom(|iters| {

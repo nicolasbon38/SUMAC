@@ -63,7 +63,7 @@ def compute_table(system, operation):
         f.write(table.to_latex(float_format="%.2f"))
 
 BENCHES = {
-    "cgka": ["add-user", "remove_user", "update_user"],
+    "cgka": ["add-user", "remove-user", "update-user"],
     "sumac": ["add-admin", "add-user", "remove-user", "update-user"]
 }
 
