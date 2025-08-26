@@ -120,7 +120,7 @@ fn benchmark_add(c: &mut Criterion) {
     let provider = setup_provider();
     let mut rng: ThreadRng = rng();
 
-    for &n_users in &[/*16, 256,*/ 1<<16] {
+    for &n_users in &[16, 256, 1<<16] {
         let mut state = filling_cgka_group_memory_optimized(n_users, &provider, ciphersuite);
         let new_user_name = format!("User_{}", n_users);
         let new_user = create_user(new_user_name.clone(), &provider);

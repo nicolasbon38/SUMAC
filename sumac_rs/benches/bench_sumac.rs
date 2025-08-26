@@ -231,9 +231,9 @@ fn benchmark_add_user(c: &mut Criterion) {
     let provider = setup_provider();
     let ciphersuite = CIPHERSUITE;
 
-    for (n_admins, n_users) in vec![256 /* , 16, 4*/]
+    for (n_admins, n_users) in vec![256 , 16, 4]
         .into_iter()
-        .zip(vec![1 << 16 /*, 256, 16*/].into_iter())
+        .zip(vec![1 << 16 , 256, 16].into_iter())
     {
         let mut state: SumacState = filling_sumac_group_memory_optimized(n_admins, n_users);
         let new_user_name = format!("User_{}", n_users);
@@ -508,7 +508,7 @@ fn benchmark_add_admin(c: &mut Criterion) {
     let provider = setup_provider();
     let ciphersuite = CIPHERSUITE;
 
-    for (n_admins, n_users) in vec![256/* , 16, 4*/].into_iter().zip(vec![1 << 16/*, 256, 16*/].into_iter()) {
+    for (n_admins, n_users) in vec![256 , 16, 4].into_iter().zip(vec![1 << 16, 256, 16].into_iter()) {
     
         let mut state: SumacState = filling_sumac_group_memory_optimized(n_admins, n_users);
         let new_admin_name = format!("Admin_{}", n_admins);
@@ -779,9 +779,9 @@ fn benchmark_update_user(c: &mut Criterion) {
     let provider = setup_provider();
     let ciphersuite = CIPHERSUITE;
 
-    for (n_admins, n_users) in vec![256 /* , 16, 4*/]
+    for (n_admins, n_users) in vec![256  , 16, 4]
         .into_iter()
-        .zip(vec![1 << 16 /*, 256, 16*/].into_iter())
+        .zip(vec![1 << 16 , 256, 16].into_iter())
     {
         let state: SumacState = filling_sumac_group_memory_optimized(n_admins, n_users);
 
@@ -1060,9 +1060,9 @@ fn benchmark_remove_user(c: &mut Criterion) {
     let provider = setup_provider();
     let ciphersuite = CIPHERSUITE;
 
-    for (n_admins, n_users) in vec![256 /* , 16, 4*/]
+    for (n_admins, n_users) in vec![256 , 16, 4]
         .into_iter()
-        .zip(vec![1 << 16 /*, 256, 16*/].into_iter())
+        .zip(vec![1 << 16 , 256, 16].into_iter())
     {
         let state: SumacState = filling_sumac_group_memory_optimized(n_admins, n_users);
 
