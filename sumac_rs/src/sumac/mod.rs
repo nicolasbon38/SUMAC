@@ -8,6 +8,7 @@ use openmls::{
     },
 };
 use openmls_traits::OpenMlsProvider;
+use rand::Rng;
 
 use crate::{
     cgka::{CGKAGroup, CommitCGKABroadcast},
@@ -21,8 +22,7 @@ use crate::{
         check_sync_sumac, create_pool_of_users, create_user, setup_provider, CIPHERSUITE,
     },
     tmka::{
-        admin_group::TmkaAdminGroup, generate_random_tmka, user_group::TmkaSlaveGroup,
-        CommitTMKABroadcast, TreeManager, TreeTMKA,
+        admin_group::TmkaAdminGroup, generate_random_tmka, generate_random_tmka_memory_optimized_for_benchmarks, user_group::TmkaSlaveGroup, CommitTMKABroadcast, TreeManager, TreeTMKA
     },
     user::User,
 };
@@ -251,6 +251,78 @@ pub fn create_large_sumac_group(
             user_name.clone(),
             SumacUserGroup {
                 forest: all_forests.get(user_name).unwrap().clone(),
+            },
+        );
+    }
+
+    Ok((all_admin_groups, all_user_groups))
+}
+
+pub fn create_large_sumac_group_memory_optimized_for_benchmarks(
+    provider: &impl OpenMlsProvider,
+    ciphersuite: Ciphersuite,
+    all_admins: &HashMap<String, User>,
+    all_users: &HashMap<String, User>,
+    actual_admins_to_compute : &Vec<usize>,
+    actual_users_to_compute: &Vec<usize>
+) -> Result<
+    (
+        HashMap<String, SumacAdminGroup>,
+        HashMap<String, SumacUserGroup>,
+    ),
+    SumacError,
+> {
+    // create the admin cgkas
+    let all_cgka_groups = CGKAGroup::generate_random_group_memory_optimized_benchmark(
+        provider,
+        ciphersuite,
+        all_admins,
+        "Admin".to_string(),
+        actual_admins_to_compute
+    )?;
+
+    // create all the tmkas
+
+    let mut all_tmka_admin_groups = HashMap::new();
+    let mut all_forests = HashMap::<String, HashMap<String, TmkaSlaveGroup>>::new();
+    for index_user in actual_users_to_compute {
+        let username = format!("User_{}", index_user);
+        all_forests.insert(username.clone(), HashMap::new());
+    }
+
+    for (admin_name, admin) in all_admins {
+        let (admin_group, user_groups) =
+            generate_random_tmka_memory_optimized_for_benchmarks(provider, ciphersuite, admin, all_users, actual_users_to_compute)?;
+        all_tmka_admin_groups.insert(admin_name, admin_group);
+        for (user, user_group) in user_groups {
+            all_forests
+                .get_mut(&user)
+                .unwrap()
+                .insert(admin_name.clone(), user_group.clone());
+        }
+    }
+
+    let mut all_admin_groups = HashMap::new();
+    let mut all_user_groups = HashMap::new();
+
+    for index_admin in actual_admins_to_compute {
+        let admin_name = format!("Admin_{}", index_admin);
+        all_admin_groups.insert(
+            admin_name.clone(),
+            SumacAdminGroup {
+                identifier: admin_name.clone(),
+                cgka: all_cgka_groups.get(&admin_name).unwrap().clone(),
+                tmka: all_tmka_admin_groups.get(&admin_name).unwrap().clone(),
+            },
+        );
+    }
+
+    for index_user in actual_users_to_compute {
+        let user_name = format!("User_{}", index_user);
+        all_user_groups.insert(
+            user_name.clone(),
+            SumacUserGroup {
+                forest: all_forests.get(&user_name).unwrap().clone(),
             },
         );
     }

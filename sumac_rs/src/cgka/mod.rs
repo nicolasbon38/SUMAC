@@ -14,7 +14,7 @@ use openmls::tree_sumac::treekem::{DecryptPathParams, UpdatePath};
 use openmls::tree_sumac::{LeafNodeCGKA, NodeVariant, OptionLeafNodeCGKA, OptionParentNodeCGKA};
 use openmls::tree_sumac::{ParentNodeCGKA, RatchetTree, SumacTree};
 use openmls_traits::OpenMlsProvider;
-use rand::rng;
+use rand::{rng, Rng};
 use rand::seq::IteratorRandom;
 
 use crate::crypto::hpke::{derive_hpke_keypair, hpke_decrypt_secret, hpke_encrypt_secret};
@@ -561,6 +561,74 @@ impl CGKAGroup {
                 tree: tree.clone(),
                 encryption_keypairs: owned_keys,
                 own_leaf_index: LeafNodeIndex::new(i.try_into().unwrap()),
+                commit_secret: commit_secret.clone(),
+            };
+
+            all_groups.insert(username, group);
+        }
+        Ok(all_groups)
+    }
+
+    pub fn generate_random_group_memory_optimized_benchmark(
+        provider: &impl OpenMlsProvider,
+        ciphersuite: Ciphersuite,
+        all_users: &HashMap<String, User>,
+        prefix_user: String,
+        actual_admin_to_compute: &Vec<usize>
+    ) -> Result<HashMap<String, Self>, SumacError> {
+        let n_users = all_users.len();
+        let n_nodes = 2 * n_users - 1;
+
+        let mut vector_nodes = Vec::with_capacity(n_nodes);
+        let mut keypairs_parents = Vec::with_capacity(n_nodes - n_users);
+        for i in 0..n_nodes {
+            if i % 2 == 0 {
+                //leaf
+                let username = format!("{}_{}", prefix_user, i / 2);
+                let user = all_users.get(&username).expect(&format!("{} not in the pool", username));
+                let leaf_node = LeafNodeCGKA::new(
+                    user.credential_with_key().clone(),
+                    user.encryption_keypair()?.public_key().clone(),
+                );
+                vector_nodes.push(Some(NodeVariant::Left(leaf_node)));
+            } else {
+                // parent
+                let keypair = PkeKeyPair::random(provider.rand(), provider.crypto(), ciphersuite)
+                    .map_err(|err| SumacError::MLSError(err))?;
+                let parent_node = ParentNodeCGKA {
+                    encryption_key: keypair.public_key().clone(),
+                    unmerged_leaves: UnmergedLeaves::new(),
+                };
+                vector_nodes.push(Some(NodeVariant::Right(parent_node)));
+                keypairs_parents.push(keypair);
+            }
+        }
+        let ratchet_tree = RatchetTree::<LeafNodeCGKA, ParentNodeCGKA>::new(vector_nodes);
+        let tree = TreeCGKA::from_ratchet_tree(ratchet_tree);
+
+        let mut all_groups = HashMap::new();
+        let commit_secret = Secret::random(ciphersuite, provider.rand())?;
+
+      
+
+        // manage key ownership
+        for i in actual_admin_to_compute {
+            let username = format!("{}_{}", prefix_user, i);
+            let user = all_users.get(&username).unwrap();
+            let mut owned_keys: Vec<PkeKeyPair> = vec![user.encryption_keypair()?];
+
+            let diff = tree.empty_diff();
+            let path = diff.filtered_direct_path(LeafNodeIndex::new((*i).try_into().unwrap()));
+
+            for index in path {
+                owned_keys.push(keypairs_parents.get(index.usize()).unwrap().clone())
+            }
+
+            let group = CGKAGroup {
+                user: user.clone(),
+                tree: tree.clone(),
+                encryption_keypairs: owned_keys,
+                own_leaf_index: LeafNodeIndex::new((*i).try_into().unwrap()),
                 commit_secret: commit_secret.clone(),
             };
 

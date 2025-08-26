@@ -64,6 +64,7 @@ pub fn update_user_committer(
     provider: &impl OpenMlsProvider,
     ciphersuite: Ciphersuite,
     all_users: &HashMap<String, User>,
+    all_admins: &HashMap<String, User>,
     all_admin_groups: &mut HashMap<String, SumacAdminGroup>,
     username_to_update: &String,
     username_committer: &String,
@@ -78,6 +79,7 @@ pub fn update_user_committer(
 > {
     // We retreive the user we wish to add to the group
     let user_to_update = all_users.get(username_to_update).unwrap();
+    let n_admins = all_admins.len();
 
     // We also retrieve the committer, and its group view
     let group_committer = all_admin_groups.get_mut(username_committer).unwrap();
@@ -108,6 +110,27 @@ pub fn update_user_committer(
             .cgka()
             .derive_group_key(provider.crypto(), ciphersuite)?,
     );
+
+    
+    /////////"phantom" computation to match the computation cost of the last patch
+    for _ in 0..n_admins - 2{
+        let dummy_regeneration_set = group_committer.tmka().build_regeneration_path(
+            provider,
+            ciphersuite,
+            &leaf_index_new_user,
+            false,
+        );
+
+        // The committer encrypt the regeneration set under the CGKA key.
+        let _ = dummy_regeneration_set.encrypt_symmetric(
+            provider.crypto(),
+            ciphersuite,
+            &group_committer
+                .cgka()
+                .derive_group_key(provider.crypto(), ciphersuite)?,
+        );
+    }
+    //////////////////////////////
 
     Ok((
         commit_broadcast_tmka,
@@ -256,6 +279,7 @@ pub fn full_update_user(
         provider,
         ciphersuite,
         all_users,
+        all_admins,
         all_admin_groups,
         &username_updated_user,
         &username_committer,

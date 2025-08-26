@@ -331,6 +331,108 @@ pub fn generate_random_tmka(
 }
 
 
+pub fn generate_random_tmka_memory_optimized_for_benchmarks(
+    provider: &impl OpenMlsProvider,
+    ciphersuite: Ciphersuite,
+    admin: &User,
+    all_users: &HashMap<String, User>,
+    actual_users_to_compute : &Vec<usize>
+) -> Result<(TmkaAdminGroup, HashMap<String, TmkaSlaveGroup>), SumacError> {
+
+    let n_users = all_users.len();
+    let n_nodes = 2 * n_users - 1;
+
+    let mut vector_nodes = Vec::with_capacity(n_nodes);
+
+    for i in 0..n_nodes {
+        if i % 2 == 0 {
+            // leaf
+            let username = format!("User_{}", i / 2);
+            let user = all_users.get(&username).unwrap();
+            let leaf_secret = Secret::random(ciphersuite, provider.rand())?;
+            let leaf_node = LeafNodeTMKA::new(
+                provider.crypto(),
+                ciphersuite,
+                user.credential_with_key().credential.clone(),
+                leaf_secret.into(),
+            )
+            .map_err(|err| SumacError::MLSError(err))?;
+            vector_nodes.push(Some(NodeVariant::Left(leaf_node)));
+        } else {
+            let path_secret = Secret::random(ciphersuite, provider.rand())?;
+            let parent_node = ParentNodeTMKA::new_from_path_secret(
+                provider.crypto(),
+                ciphersuite,
+                PathSecret::from(MlsSecret::from(path_secret.into())),
+                None,
+            )
+            .map_err(|e| SumacError::MLSError(e))?;
+            vector_nodes.push(Some(NodeVariant::Right(parent_node)));
+        }
+    }
+
+    let ratchet_tree = RatchetTree::<LeafNodeTMKA, ParentNodeTMKA>::new(vector_nodes.clone());
+    let tree = TreeTMKA::from_ratchet_tree(ratchet_tree);
+    let commit_secret = Secret::random(ciphersuite, provider.rand())?;
+
+    let mut all_user_groups = HashMap::new();
+
+
+    for i in actual_users_to_compute {
+        let username = format!("User_{}", i);
+        let user = all_users.get(&username).unwrap();
+
+        let mut user_tree = tree.clone();
+
+        let mut diff = user_tree.empty_diff();
+        diff.whiten(ciphersuite);
+
+        let path = diff.filtered_direct_path(LeafNodeIndex::new((*i).try_into().unwrap()));
+
+        for index_parent in path {
+            let index_parent_in_vec = index_parent.usize() * 2 + 1;
+            let filled_parent = vector_nodes.get(index_parent_in_vec).unwrap().clone().unwrap();
+
+            match filled_parent {
+                either::Either::Left(_) => panic!(),
+                either::Either::Right(parent) => {
+                    diff.just_replace_parent(parent.into(), index_parent)
+                }
+            };
+        }
+
+        let index_leaf_in_vec = 2 * i;
+        let filled_leaf = vector_nodes.get(index_leaf_in_vec).unwrap().clone().unwrap();
+        match filled_leaf {
+            either::Either::Left(leaf) => {
+                diff.just_replace_leaf(leaf.into(), LeafNodeIndex::new((*i).try_into().unwrap()))
+            }
+            either::Either::Right(_) => panic!(),
+        }
+
+        user_tree.merge_diff(diff.into_staged_diff().unwrap());
+
+        let user_group = TmkaSlaveGroup {
+            tree: user_tree,
+            own_leaf_index: LeafNodeIndex::new((*i).try_into().unwrap()),
+            user: user.clone(),
+            commit_secret: commit_secret.clone(),
+        };
+        all_user_groups
+            .insert(username, user_group);
+    }
+
+    let admin_group = TmkaAdminGroup {
+        admin: admin.clone(),
+        tree,
+        commit_secret,
+    };
+
+    Ok((admin_group, all_user_groups))
+}
+
+
+
 
 #[test]
 fn test_create_large_tmka() {

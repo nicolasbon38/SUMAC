@@ -6,7 +6,7 @@ use openmls::prelude::Ciphersuite;
 use openmls::storage::OpenMlsProvider;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 
-use rand::{rng, thread_rng};
+use rand::{rng, thread_rng, Rng};
 use rand::rngs::ThreadRng;
 use rand::seq::IteratorRandom;
 use sumac_rs::cgka::{CGKAGroup, CommitCGKABroadcast, CommitCGKAUnicast};
@@ -29,6 +29,36 @@ fn filling_cgka_group(
 
     let all_groups =
         CGKAGroup::generate_random_group(provider, ciphersuite, &all_users, "User".to_string())
+            .unwrap();
+
+    CGKAState {
+        all_groups,
+        all_users,
+    }
+}
+
+
+fn filling_cgka_group_memory_optimized(
+    n_users: usize,
+    provider: &impl OpenMlsProvider,
+    ciphersuite: Ciphersuite,
+) -> CGKAState {
+    let all_users = create_pool_of_users(n_users, provider, "User".to_string());
+
+     // Sample three random users
+    let mut rng = thread_rng();
+    let index_user_1 = rng.gen_range(0..n_users);
+    let mut index_user_2 = rng.gen_range(0..n_users);
+    while index_user_1 == index_user_2 {
+        index_user_2 = rng.gen_range(0..n_users);
+    }
+    let mut index_user_3 = rng.gen_range(0..n_users);
+    while (index_user_1 == index_user_3) || (index_user_2 == index_user_3) {
+        index_user_3 = rng.gen_range(0..n_users);
+    }
+
+    let all_groups =
+        CGKAGroup::generate_random_group_memory_optimized_benchmark(provider, ciphersuite, &all_users, "User".to_string(), &vec![index_user_1, index_user_2, index_user_3])
             .unwrap();
 
     CGKAState {
@@ -90,8 +120,8 @@ fn benchmark_add(c: &mut Criterion) {
     let provider = setup_provider();
     let mut rng: ThreadRng = rng();
 
-    for &n_users in &[10, 100, 1000] {
-        let mut state = filling_cgka_group(n_users, &provider, ciphersuite);
+    for &n_users in &[/*16, 256,*/ 1<<16] {
+        let mut state = filling_cgka_group_memory_optimized(n_users, &provider, ciphersuite);
         let new_user_name = format!("User_{}", n_users);
         let new_user = create_user(new_user_name.clone(), &provider);
         state
@@ -249,15 +279,15 @@ fn remove_user_cgka_one_other(
 fn benchmark_remove(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove-user_cgka");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(60));
+    group.measurement_time(Duration::from_secs(20));
     group.warm_up_time(Duration::from_nanos(1));
 
     let ciphersuite = CIPHERSUITE;
     let provider = setup_provider();
     let mut rng: ThreadRng = thread_rng();
 
-    for &n_users in &[10, 100, 1000] {
-        let state = filling_cgka_group(n_users, &provider, ciphersuite);
+    for &n_users in &[16, 256, 1<<16] {
+        let state = filling_cgka_group_memory_optimized(n_users, &provider, ciphersuite);
 
         // -------- Committer path: measure ONLY core op --------
         group.bench_with_input(
@@ -408,15 +438,15 @@ fn update_user_cgka_one_other(
 fn benchmark_update(c: &mut Criterion) {
     let mut group = c.benchmark_group("update-user_cgka");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(60));
+    group.measurement_time(Duration::from_secs(20));
     group.warm_up_time(Duration::from_nanos(1));
 
     let ciphersuite = CIPHERSUITE;
     let provider = setup_provider();
     let mut rng: ThreadRng = thread_rng();
 
-    for &n_users in &[10, 100, 1000] {
-        let state = filling_cgka_group(n_users, &provider, ciphersuite);
+    for &n_users in &[16, 256, 1<<16] {
+        let state = filling_cgka_group_memory_optimized(n_users, &provider, ciphersuite);
 
         // -------- Committer path: measure ONLY core op --------
         group.bench_with_input(

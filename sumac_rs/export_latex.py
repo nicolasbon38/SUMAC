@@ -13,11 +13,11 @@ def compute_table(system, operation):
             bench_name = os.path.relpath(root, base)
 
             # Only keep benchmarks that end with "new"
-            if not bench_name.endswith("base"):
+            if not bench_name.endswith("new"):
                 continue
 
             # Remove the trailing "/new"
-            clean_name = bench_name.rsplit("/base", 1)[0]
+            clean_name = bench_name.rsplit("/new", 1)[0]
 
             path = os.path.join(root, "estimates.json")
             with open(path) as f:
