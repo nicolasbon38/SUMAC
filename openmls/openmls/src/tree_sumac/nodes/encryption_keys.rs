@@ -284,6 +284,23 @@ impl SymmetricKey {
             .map_err(|err| LibraryError::unexpected_crypto_error(err))
     }
 
+    pub fn derive_from_secret(
+        crypto: &impl OpenMlsCrypto,
+        ciphersuite: Ciphersuite,
+        secret: &Secret,
+    ) -> Result<Self, LibraryError> {
+        secret
+            .hkdf_expand(
+                crypto,
+                ciphersuite,
+                "enc".as_bytes(),
+                ciphersuite.aead_key_length(),
+            )
+            .map(|secret| Self::from(AeadKey::from_secret(secret, ciphersuite)))
+            .map_err(|e| LibraryError::unexpected_crypto_error(e))
+    }
+
+
     pub fn derive_from_path_secret(
         crypto: &impl OpenMlsCrypto,
         ciphersuite: Ciphersuite,
@@ -302,9 +319,21 @@ impl SymmetricKey {
             .map_err(|e| LibraryError::unexpected_crypto_error(e))
     }
 
-    pub(crate) fn zero(ciphersuite : Ciphersuite) -> Self{
+    pub fn zero(ciphersuite : Ciphersuite) -> Self{
         Self { key: AeadKey::from_secret(Secret::zero(ciphersuite), ciphersuite) }
     }
+
+    pub fn as_slice(&self) -> &[u8]{
+        self.key.as_slice()
+    } 
+
+    pub fn from_vec(vec: Vec<u8>, ciphersuite : Ciphersuite) -> Self {
+        Self { key: AeadKey{
+            aead_mode: ciphersuite.aead_algorithm(),
+            value: vec.into(),
+        } }
+    }
+
 }
 
 impl From<AeadKey> for SymmetricKey {
@@ -312,6 +341,7 @@ impl From<AeadKey> for SymmetricKey {
         Self { key }
     }
 }
+
 
 impl From<(SymmetricKey, SymmetricKey)> for SymmetricKey {
     fn from(value: (SymmetricKey, SymmetricKey)) -> Self {

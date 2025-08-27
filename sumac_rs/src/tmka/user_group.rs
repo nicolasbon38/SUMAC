@@ -31,7 +31,8 @@ pub struct TmkaSlaveGroup {
     pub tree: TreeTMKA,
     pub own_leaf_index: LeafNodeIndex,
     pub user: User,
-    pub commit_secret : Secret
+    pub commit_secret : Secret,
+    pub group_key: SymmetricKey
 }
 
 impl TmkaSlaveGroup {
@@ -82,12 +83,13 @@ impl TmkaSlaveGroup {
         )
         .unwrap();
 
+        self.group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret.clone()).map_err(|e| SumacError::MLSError(e))?;  
         self.commit_secret = commit_secret.secret().into();
 
         diff.process_update_path(*updated_leaf_index, path).map_err(|err| SumacError::MLSError(err))?;
 
         match operation{
-            Operation::Remove(user) => diff.just_replace_leaf(OptionLeafNodeTMKA::blank(), *updated_leaf_index),
+            Operation::Remove(_) => diff.just_replace_leaf(OptionLeafNodeTMKA::blank(), *updated_leaf_index),
             _ =>{}
         }
 
@@ -95,6 +97,7 @@ impl TmkaSlaveGroup {
             .merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
         Ok(())
     }
+
 
     pub fn process_self_update(
         &mut self,
@@ -143,6 +146,8 @@ impl TmkaSlaveGroup {
             .expect("Failed to update path");
 
         self.tree.merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
+        
+        self.group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret.clone()).map_err(|e| SumacError::MLSError(e))?;  
         self.commit_secret = commit_secret.secret().clone().into();
 
         Ok(())
@@ -197,11 +202,14 @@ impl TmkaSlaveGroup {
 
         public_tree.merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
 
+        let group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret.clone()).map_err(|e| SumacError::MLSError(e))?;  
+
         Ok(Self {
             tree: public_tree,
             own_leaf_index: own_leaf_node_index,
             user: user.clone(),
-            commit_secret: commit_secret.secret().into()
+            commit_secret: commit_secret.secret().into(),
+            group_key
         })
     } 
 }

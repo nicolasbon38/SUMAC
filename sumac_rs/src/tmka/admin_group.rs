@@ -4,7 +4,7 @@ use openmls::{
     prelude::{Ciphersuite, Credential, LeafNodeIndex, PathSecret},
     tree_sumac::{
         nodes::{
-            encryption_keys::KeyPairRef,
+            encryption_keys::{KeyPairRef, SymmetricKey},
             traits::{OptionNode, White},
         }, treekem::UpdatePath, LeafNodeTMKA, OptionLeafNodeTMKA, ParentNodeTMKA
     },
@@ -23,6 +23,7 @@ pub struct TmkaAdminGroup {
     pub admin: TreeManager,
     pub tree: TreeTMKA,
     pub commit_secret: Secret,
+    pub group_key: SymmetricKey
 }
 
 impl TmkaAdminGroup {
@@ -118,6 +119,7 @@ impl TmkaAdminGroup {
             )
             .expect("Failed to compute update path");
 
+        self.group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret.clone()).map_err(|e| SumacError::MLSError(e))?;  
         self.commit_secret = commit_secret.secret().into();
 
         //         // Now we encrypt the path to the other members, using secret-key cryptography

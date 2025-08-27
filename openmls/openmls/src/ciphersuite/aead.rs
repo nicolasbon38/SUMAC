@@ -11,8 +11,8 @@ pub(crate) const NONCE_BYTES: usize = 12;
 #[cfg_attr(all(feature = "crypto-debug", feature = "sumac"), derive(Debug))]
 #[cfg_attr(feature = "sumac", derive(TlsSize, TlsSerialize))]
 pub struct AeadKey {
-    aead_mode: AeadType,
-    value: SecretVLBytes,
+    pub aead_mode: AeadType,
+    pub value: SecretVLBytes,
 }
 
 

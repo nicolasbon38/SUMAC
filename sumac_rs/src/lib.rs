@@ -9,7 +9,7 @@ pub mod user;
 
 pub mod key_package;
 pub mod errors;
-pub(crate) mod crypto;
+pub mod crypto;
 pub mod test_utils;
 
 

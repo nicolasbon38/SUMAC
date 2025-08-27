@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use openmls::{
     prelude::{Ciphersuite, HpkeCiphertext, LeafNodeIndex, PathSecret, Secret as MlsSecret},
     tree_sumac::{
-        nodes::encryption_keys::PkeKeyPair, LeafNodeTMKA, NodeVariant, OptionLeafNodeTMKA,
+        nodes::encryption_keys::{PkeKeyPair, SymmetricKey}, LeafNodeTMKA, NodeVariant, OptionLeafNodeTMKA,
         OptionParentNodeTMKA, ParentNodeTMKA, RatchetTree, SumacTree,
     },
     treesync::node::parent_node::UnmergedLeaves,
@@ -49,6 +49,7 @@ impl TreeManager {
         .map_err(|err| SumacError::MLSError(err))?;
 
         let commit_secret = leaf_secret.derive_secret(provider.crypto(), ciphersuite)?;
+        let group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;
 
         let tree = TreeTMKA::new(leaf_node.into()).map_err(|err| SumacError::MLSError(err))?;
 
@@ -57,12 +58,14 @@ impl TreeManager {
                 admin: self.clone(),
                 tree: tree.clone(),
                 commit_secret: commit_secret.clone(),
+                group_key: group_key.clone()
             },
             TmkaSlaveGroup {
                 tree,
                 own_leaf_index: LeafNodeIndex::new(0),
                 user: first_user.clone(),
                 commit_secret,
+                group_key
             },
         ))
     }
@@ -274,6 +277,7 @@ pub fn generate_random_tmka(
     let ratchet_tree = RatchetTree::<LeafNodeTMKA, ParentNodeTMKA>::new(vector_nodes.clone());
     let tree = TreeTMKA::from_ratchet_tree(ratchet_tree);
     let commit_secret = Secret::random(ciphersuite, provider.rand())?;
+    let group_key =  SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;  
 
     let mut all_user_groups = HashMap::new();
 
@@ -316,6 +320,7 @@ pub fn generate_random_tmka(
             own_leaf_index: LeafNodeIndex::new(i.try_into().unwrap()),
             user: user.clone(),
             commit_secret: commit_secret.clone(),
+            group_key: group_key.clone()
         };
         all_user_groups
             .insert(username, user_group);
@@ -325,6 +330,7 @@ pub fn generate_random_tmka(
         admin: admin.clone(),
         tree,
         commit_secret,
+        group_key
     };
 
     Ok((admin_group, all_user_groups))
@@ -374,6 +380,7 @@ pub fn generate_random_tmka_memory_optimized_for_benchmarks(
     let ratchet_tree = RatchetTree::<LeafNodeTMKA, ParentNodeTMKA>::new(vector_nodes.clone());
     let tree = TreeTMKA::from_ratchet_tree(ratchet_tree);
     let commit_secret = Secret::random(ciphersuite, provider.rand())?;
+    let group_key =  SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;  
 
     let mut all_user_groups = HashMap::new();
 
@@ -417,6 +424,7 @@ pub fn generate_random_tmka_memory_optimized_for_benchmarks(
             own_leaf_index: LeafNodeIndex::new((*i).try_into().unwrap()),
             user: user.clone(),
             commit_secret: commit_secret.clone(),
+            group_key: group_key.clone()
         };
         all_user_groups
             .insert(username, user_group);
@@ -426,6 +434,7 @@ pub fn generate_random_tmka_memory_optimized_for_benchmarks(
         admin: admin.clone(),
         tree,
         commit_secret,
+        group_key
     };
 
     Ok((admin_group, all_user_groups))

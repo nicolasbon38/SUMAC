@@ -101,3 +101,5 @@ use openmls::tree_sumac::nodes::encryption_keys::{PkeKeyPair, PkePrivateKey, Pke
 pub type HPKEEncryptionKeyPair = PkeKeyPair;
 pub type HPKEPrivateKey = PkePrivateKey;
 pub type HPKEPublicKey = PkePublicKey;
+
+pub type AeadCiphertext = Vec<u8>;

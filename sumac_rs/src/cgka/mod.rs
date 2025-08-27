@@ -37,6 +37,7 @@ pub struct CGKAGroup {
     pub encryption_keypairs: Vec<HPKEEncryptionKeyPair>,
     own_leaf_index: LeafNodeIndex,
     pub commit_secret: Secret,
+    pub group_key: SymmetricKey
 }
 
 impl User {
@@ -50,12 +51,15 @@ impl User {
         let tree = TreeCGKA::new(key_package.leaf_node_cgka().clone().into())
             .expect("Creation of the CGKA failed");
 
+        let commit_secret = Secret::random(ciphersuite, provider.rand())?;
+
         Ok(CGKAGroup {
             tree,
             user: self.clone(),
             encryption_keypairs: vec![self.encryption_keypair()?],
             own_leaf_index: LeafNodeIndex::new(0),
-            commit_secret: Secret::random(ciphersuite, provider.rand())?,
+            commit_secret: commit_secret.clone(),
+            group_key: SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.into()).map_err(|e| SumacError::MLSError(e))?
         })
     }
 }
@@ -155,6 +159,7 @@ impl CGKAGroup {
             )
             .expect("Failed to compute update path");
 
+        self.group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().secret()).map_err(|e| SumacError::MLSError(e))?;
         self.commit_secret = commit_secret.secret().into();
 
         let exclusion_list = HashSet::new();
@@ -290,6 +295,7 @@ impl CGKAGroup {
             .map_err(|e| SumacError::MLSError(e))?;
 
         self.encryption_keypairs.extend(new_encryption_keypairs);
+        self.group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret).map_err(|e| SumacError::MLSError(e))?;
         self.commit_secret = commit_secret.secret().into();
         self.tree
             .merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
@@ -331,30 +337,19 @@ impl CGKAGroup {
         let mut owned_keypairs = vec![user.encryption_keypair()?];
         owned_keypairs.extend(encryption_keypairs);
 
+        let group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret).map_err(|e| SumacError::MLSError(e))?;
+
         Ok(Self {
             user,
             tree: public_tree,
             encryption_keypairs: owned_keypairs,
             own_leaf_index: new_member_index,
             commit_secret: commit_secret.secret().into(),
+            group_key
         })
     }
 }
 
-impl CGKAGroup {
-    pub fn derive_group_key(
-        &self,
-        crypto: &impl OpenMlsCrypto,
-        ciphersuite: Ciphersuite,
-    ) -> Result<SymmetricKey, SumacError> {
-        SymmetricKey::derive_from_path_secret(
-            crypto,
-            ciphersuite,
-            &PathSecret::from(MlsSecret::from_slice(self.commit_secret.as_slice())),
-        )
-        .map_err(|err| SumacError::MLSError(err))
-    }
-}
 
 #[test]
 fn test_cgka() {
@@ -543,6 +538,7 @@ impl CGKAGroup {
 
         let mut all_groups = HashMap::new();
         let commit_secret = Secret::random(ciphersuite, provider.rand())?;
+        let group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;
         // manage key ownership
         for i in 0..n_users {
             let username = format!("{}_{}", prefix_user, i);
@@ -562,6 +558,7 @@ impl CGKAGroup {
                 encryption_keypairs: owned_keys,
                 own_leaf_index: LeafNodeIndex::new(i.try_into().unwrap()),
                 commit_secret: commit_secret.clone(),
+                group_key: group_key.clone()
             };
 
             all_groups.insert(username, group);
@@ -608,8 +605,7 @@ impl CGKAGroup {
 
         let mut all_groups = HashMap::new();
         let commit_secret = Secret::random(ciphersuite, provider.rand())?;
-
-      
+        let group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;  
 
         // manage key ownership
         for i in actual_admin_to_compute {
@@ -630,6 +626,7 @@ impl CGKAGroup {
                 encryption_keypairs: owned_keys,
                 own_leaf_index: LeafNodeIndex::new((*i).try_into().unwrap()),
                 commit_secret: commit_secret.clone(),
+                group_key: group_key.clone()
             };
 
             all_groups.insert(username, group);

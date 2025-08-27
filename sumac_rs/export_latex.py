@@ -64,7 +64,7 @@ def compute_table(system, operation):
 
 BENCHES = {
     "cgka": ["add-user", "remove-user", "update-user"],
-    "sumac": ["add-admin", "add-user", "remove-user", "update-user"]
+    "sumac": ["add-admin", "add-user", "remove-user", "update-user", "remove-admin"]
 }
 
 if __name__ == "__main__":

@@ -115,9 +115,12 @@ impl EncryptedRegenerationSet {
 pub type CombinedPath = RegenerationSet;
 
 pub struct EncryptedCombinedPath{
+    pub leaf_node_index: LeafNodeIndex,
     pub indexes : Vec<ParentNodeIndex>,
-    pub ciphertext : HpkeCiphertext
+    pub ciphertext : HpkeCiphertext,
+    pub with_leaf: bool
 }
+pub type EncryptedRegenerationSetHPKE = EncryptedCombinedPath;
 
 impl CombinedPath {
     pub fn encrypt_hpke(
@@ -129,6 +132,13 @@ impl CombinedPath {
 
         let mut byte_stream_vec = Vec::new();
         let mut indexes = Vec::new();
+        // start by appending the leaf secret
+        let with_leaf = if let Some(leaf_secret) = self.leaf_secret(){
+            byte_stream_vec.push(leaf_secret.clone().as_slice().to_vec());
+            true
+        } else {
+            false
+        };
         let path_secrets = self.path_secrets.clone();
         for (index, secret) in path_secrets.into_iter(){
             let binding = secret.clone().secret();
@@ -138,25 +148,11 @@ impl CombinedPath {
 
         let ciphertext = encryption_key.encrypt(provider.crypto(), ciphersuite, &byte_stream_vec.concat()).expect("Encryption failed");
 
-        // Ok(self
-        //     .secrets()
-        //     .into_iter()
-        //     .map(|(index, path_secret)| {
-        //         (
-        //             *index,
-        //             encryption_key
-        //                 .encrypt(
-        //                     provider.crypto(),
-        //                     ciphersuite,
-        //                     path_secret.clone().secret().as_slice(),
-        //                 )
-        //                 .expect("Encryption failed"),
-        //         )
-        //     })
-        //     .collect())
         Ok(EncryptedCombinedPath{
             indexes,
             ciphertext,
+            leaf_node_index: self.leaf_index,
+            with_leaf,
         })
     }
 }
@@ -169,8 +165,8 @@ impl EncryptedCombinedPath{
         provider: &impl OpenMlsProvider,
         ciphersuite: Ciphersuite,
         decryption_key: &PkePrivateKey,
-    ) -> Result<(Vec<ParentNodeIndex>, Vec<PathSecret>), SumacError>{
-        let length = self.indexes.len();
+    ) -> Result<RegenerationSet, SumacError>{
+        let length = self.indexes.len() + self.with_leaf as usize;
         let size = ciphersuite.hash_length();
         
         let raw_plaintext = decryption_key.decrypt_raw(provider.crypto(), ciphersuite, &self.ciphertext).unwrap();
@@ -182,10 +178,20 @@ impl EncryptedCombinedPath{
             output.push(PathSecret::from(secret));
         }
 
+        let (leaf_secret, path_secrets) = if self.with_leaf{
+            let binding = output.remove(0);
+            (Some(binding), output)
+        }else{
+            (None, output)
+        };
 
-        Ok((self.indexes.clone(), output))
+        assert_eq!(path_secrets.len(), self.indexes.len());
+    
+
+        Ok(RegenerationSet { leaf_index: self.leaf_node_index, leaf_secret: leaf_secret.map(|l| l.secret().into()), path_secrets: self.indexes.clone().into_iter().zip(path_secrets).collect() })
     }
 }
+
 
 ///// Interfaces with the TMKA groups
 
