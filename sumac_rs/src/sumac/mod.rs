@@ -1,33 +1,23 @@
-use std::{collections::HashMap, fmt::format};
+use std::collections::HashMap;
 
 use openmls::{
-    prelude::{Ciphersuite, HpkeCiphertext, LeafNodeIndex, ParentNodeIndex},
+    prelude::{Ciphersuite, LeafNodeIndex},
     tree_sumac::{
         nodes::{
-            encryption_keys::{KeyPairRef, SymmetricKey},
+            encryption_keys::SymmetricKey,
             traits::White,
         },
         LeafNodeTMKA,
     },
 };
 use openmls_traits::OpenMlsProvider;
-use rand::Rng;
 
 use crate::{
-    cgka::{CGKAGroup, CommitCGKABroadcast},
-    crypto::{hpke::hpke_encrypt_secret, secret::Secret},
+    cgka::CGKAGroup,
     errors::SumacError,
-    sumac::{
-        regeneration::{EncryptedCombinedPath, RegenerationSet},
-        sumac_operations::{add_admin::full_add_admin, add_user::full_add_user},
-    },
-    test_utils::{
-        check_sync_sumac, create_pool_of_users, create_user, setup_provider, CIPHERSUITE,
-    },
     tmka::{
         admin_group::TmkaAdminGroup, generate_random_tmka,
         generate_random_tmka_memory_optimized_for_benchmarks, user_group::TmkaSlaveGroup,
-        CommitTMKABroadcast, TreeManager, TreeTMKA,
     },
     user::User,
 };
@@ -41,7 +31,7 @@ pub enum OperationSUMAC {
 
 #[derive(Clone)]
 pub struct SumacAdminGroup {
-    identifier: String,
+    _identifier: String,
     cgka: CGKAGroup,
     tmka: TmkaAdminGroup,
     sumac_group_key: SymmetricKey,
@@ -62,10 +52,22 @@ impl SumacUserGroup {
         &mut self.forest
     }
 
-    pub fn update_group_key_from_tree(&mut self, provider: &impl OpenMlsProvider, ciphersuite: Ciphersuite, username_admin_tree: &String) -> Result<(), SumacError>{
-        let secret = self.forest.get(username_admin_tree).unwrap().commit_secret.clone();
+    pub fn update_group_key_from_tree(
+        &mut self,
+        provider: &impl OpenMlsProvider,
+        ciphersuite: Ciphersuite,
+        username_admin_tree: &String,
+    ) -> Result<(), SumacError> {
+        let secret = self
+            .forest
+            .get(username_admin_tree)
+            .unwrap()
+            .commit_secret
+            .clone();
         let new_secret = secret.derive_secret(provider.crypto(), ciphersuite)?;
-        self.sumac_group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &new_secret.into()).map_err(|e| SumacError::MLSError(e))?;
+        self.sumac_group_key =
+            SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &new_secret.into())
+                .map_err(|e| SumacError::MLSError(e))?;
         Ok(())
     }
 }
@@ -87,7 +89,7 @@ impl User {
 
         Ok((
             SumacAdminGroup {
-                identifier: self.identity(),
+                _identifier: self.identity(),
                 cgka: self.create_group(provider, ciphersuite)?,
                 tmka: tmka_admin_group,
                 sumac_group_key: sumac_group_key.clone(),
@@ -101,15 +103,6 @@ impl User {
 }
 
 impl SumacAdminGroup {
-    pub fn commit(
-        &mut self,
-        op: OperationSUMAC,
-        ciphersuite: Ciphersuite,
-        provider: &impl OpenMlsProvider,
-    ) {
-        todo!(); // Eventually we will factorize every operation in this methode
-    }
-
     pub fn cgka(&self) -> &CGKAGroup {
         &self.cgka
     }
@@ -126,69 +119,43 @@ impl SumacAdminGroup {
         &mut self.tmka
     }
 
-    pub fn admin_key(&self) -> &SymmetricKey{
+    pub fn admin_key(&self) -> &SymmetricKey {
         &self.cgka().group_key
     }
 
-    pub fn update_group_key_from_tree(&mut self, provider: &impl OpenMlsProvider, ciphersuite: Ciphersuite) -> Result<SymmetricKey, SumacError>{
+    pub fn update_group_key_from_tree(
+        &mut self,
+        provider: &impl OpenMlsProvider,
+        ciphersuite: Ciphersuite,
+    ) -> Result<SymmetricKey, SumacError> {
         let secret = self.tmka.commit_secret.clone();
         let new_secret = secret.derive_secret(provider.crypto(), ciphersuite)?;
-        self.sumac_group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &new_secret.into()).map_err(|e| SumacError::MLSError(e))?;
+        self.sumac_group_key =
+            SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &new_secret.into())
+                .map_err(|e| SumacError::MLSError(e))?;
         Ok(self.sumac_group_key.clone())
     }
 
-    pub fn update_group_key_from_cgka(&mut self, provider: &impl OpenMlsProvider, ciphersuite: Ciphersuite) -> Result<SymmetricKey, SumacError>{
+    pub fn update_group_key_from_cgka(
+        &mut self,
+        provider: &impl OpenMlsProvider,
+        ciphersuite: Ciphersuite,
+    ) -> Result<SymmetricKey, SumacError> {
         let secret = self.cgka.commit_secret.clone();
         let new_secret = secret.derive_secret(provider.crypto(), ciphersuite)?;
-        self.sumac_group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &new_secret.into()).map_err(|e| SumacError::MLSError(e))?;
+        self.sumac_group_key =
+            SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &new_secret.into())
+                .map_err(|e| SumacError::MLSError(e))?;
         Ok(self.sumac_group_key.clone())
     }
 }
 
-
-
-fn process_broadcast_cgka(
-    all_admin_groups: &mut HashMap<String, SumacAdminGroup>,
-    identifier_admin_committer: &String,
-    broadcast: CommitCGKABroadcast,
-    provider: &impl OpenMlsProvider,
-    ciphersuite: Ciphersuite,
-) -> Result<(), SumacError> {
-    // process the broadcast
-    for (name, group) in all_admin_groups.iter_mut() {
-        if name != identifier_admin_committer {
-            group
-                .cgka_mut()
-                .process(&broadcast, provider, ciphersuite)?;
-        }
-    }
-    Ok(())
-}
-
-fn process_broadcast_tmka(
-    all_users_groups: &mut HashMap<String, SumacUserGroup>,
-    identifier_admin_committer: &String,
-    broadcast: CommitTMKABroadcast,
-    provider: &impl OpenMlsProvider,
-    ciphersuite: Ciphersuite,
-    target_username: Option<String>,
-) -> Result<(), SumacError> {
-    // process the broadcast
-    all_users_groups
-        .iter_mut()
-        .filter(|(username, _)| match &target_username {
-            Some(actual_username) => actual_username != *username,
-            None => true,
-        })
-        .for_each(|(_, group)| {
-            group
-                .forest_mut()
-                .get_mut(identifier_admin_committer)
-                .unwrap()
-                .process(&broadcast, provider, ciphersuite)
-                .unwrap()
-        });
-    Ok(())
+#[derive(Clone)]
+pub struct SumacState {
+    pub all_admins: HashMap<String, User>,
+    pub all_users: HashMap<String, User>,
+    pub all_admin_groups: HashMap<String, SumacAdminGroup>,
+    pub all_user_groups: HashMap<String, SumacUserGroup>,
 }
 
 impl TmkaAdminGroup {
@@ -202,56 +169,16 @@ impl TmkaAdminGroup {
     }
 }
 
-pub fn setup_sumac(
-    provider: &impl OpenMlsProvider,
-    ciphersuite: Ciphersuite,
-    n_admins: usize,
-    n_users: usize,
-) -> Result<
-    (
-        HashMap<String, User>,
-        HashMap<String, User>,
-        HashMap<String, SumacAdminGroup>,
-        HashMap<String, SumacUserGroup>,
-    ),
-    SumacError,
-> {
-    // Generate a bunch of admins and users, with their personal keys
-    let all_admins = create_pool_of_users(n_admins, provider, "Admin".to_owned());
-    let all_users = create_pool_of_users(n_users, provider, "User".to_owned());
-
-    let mut all_admin_groups = HashMap::<String, SumacAdminGroup>::new();
-    let mut all_user_groups = HashMap::<String, SumacUserGroup>::new();
-
-    // Create a Sumac Group, with one admin and one standard user.
-    let first_admin = all_admins.get("Admin_0").unwrap();
-    let first_user = all_users.get("User_0").unwrap();
-
-    let (admin_group_0, user_group_0) =
-        first_admin.create_sumac_group(provider, ciphersuite, first_user)?;
-
-    //Put the group views in the container
-    all_user_groups.insert("User_0".to_owned(), user_group_0);
-    all_admin_groups.insert("Admin_0".to_owned(), admin_group_0);
-
-    Ok((all_admins, all_users, all_admin_groups, all_user_groups))
-}
 
 pub fn create_large_sumac_group(
     provider: &impl OpenMlsProvider,
     ciphersuite: Ciphersuite,
-    all_admins: &HashMap<String, User>,
-    all_users: &HashMap<String, User>,
-) -> Result<
-    (
-        HashMap<String, SumacAdminGroup>,
-        HashMap<String, SumacUserGroup>,
-    ),
-    SumacError,
-> {
+    all_admins: HashMap<String, User>,
+    all_users: HashMap<String, User>,
+) -> Result<SumacState, SumacError> {
     // create the admin cgkas
     let all_cgka_groups =
-        CGKAGroup::generate_random_group(provider, ciphersuite, all_admins, "Admin".to_string())?;
+        CGKAGroup::generate_random_group(provider, ciphersuite, &all_admins, "Admin".to_string())?;
 
     // create all the tmkas
     let mut all_tmka_admin_groups = HashMap::new();
@@ -260,10 +187,10 @@ pub fn create_large_sumac_group(
         all_forests.insert(username.clone(), HashMap::new());
     }
 
-    for (admin_name, admin) in all_admins {
+    for (admin_name, admin) in all_admins.iter() {
         let (admin_group, user_groups) =
-            generate_random_tmka(provider, ciphersuite, admin, all_users)?;
-        all_tmka_admin_groups.insert(admin_name, admin_group);
+            generate_random_tmka(provider, ciphersuite, &admin,& all_users)?;
+        all_tmka_admin_groups.insert(admin_name.clone(), admin_group);
         for (user, user_group) in user_groups {
             all_forests
                 .get_mut(&user)
@@ -279,7 +206,7 @@ pub fn create_large_sumac_group(
         all_admin_groups.insert(
             admin_name.clone(),
             SumacAdminGroup {
-                identifier: admin_name.clone(),
+                _identifier: admin_name.clone(),
                 cgka: all_cgka_groups.get(admin_name).unwrap().clone(),
                 tmka: all_tmka_admin_groups.get(admin_name).unwrap().clone(),
                 sumac_group_key: SymmetricKey::zero(ciphersuite),
@@ -297,28 +224,31 @@ pub fn create_large_sumac_group(
         );
     }
 
-    Ok((all_admin_groups, all_user_groups))
+    Ok(SumacState {
+        all_admins,
+        all_users,
+        all_admin_groups,
+        all_user_groups,
+    })
 }
+
 
 pub fn create_large_sumac_group_memory_optimized_for_benchmarks(
     provider: &impl OpenMlsProvider,
     ciphersuite: Ciphersuite,
-    all_admins: &HashMap<String, User>,
-    all_users: &HashMap<String, User>,
+    all_admins: HashMap<String, User>,
+    all_users: HashMap<String, User>,
     actual_admins_to_compute: &Vec<usize>,
     actual_users_to_compute: &Vec<usize>,
 ) -> Result<
-    (
-        HashMap<String, SumacAdminGroup>,
-        HashMap<String, SumacUserGroup>,
-    ),
+    SumacState,
     SumacError,
 > {
     // create the admin cgkas
     let all_cgka_groups = CGKAGroup::generate_random_group_memory_optimized_benchmark(
         provider,
         ciphersuite,
-        all_admins,
+        &all_admins,
         "Admin".to_string(),
         actual_admins_to_compute,
     )?;
@@ -332,15 +262,15 @@ pub fn create_large_sumac_group_memory_optimized_for_benchmarks(
         all_forests.insert(username.clone(), HashMap::new());
     }
 
-    for (admin_name, admin) in all_admins {
+    for (admin_name, admin) in all_admins.iter() {
         let (admin_group, user_groups) = generate_random_tmka_memory_optimized_for_benchmarks(
             provider,
             ciphersuite,
-            admin,
-            all_users,
+            &admin,
+            &all_users,
             actual_users_to_compute,
         )?;
-        all_tmka_admin_groups.insert(admin_name, admin_group);
+        all_tmka_admin_groups.insert(admin_name.clone(), admin_group);
         for (user, user_group) in user_groups {
             all_forests
                 .get_mut(&user)
@@ -357,7 +287,7 @@ pub fn create_large_sumac_group_memory_optimized_for_benchmarks(
         all_admin_groups.insert(
             admin_name.clone(),
             SumacAdminGroup {
-                identifier: admin_name.clone(),
+                _identifier: admin_name.clone(),
                 cgka: all_cgka_groups.get(&admin_name).unwrap().clone(),
                 tmka: all_tmka_admin_groups.get(&admin_name).unwrap().clone(),
                 sumac_group_key: SymmetricKey::zero(ciphersuite),
@@ -376,52 +306,5 @@ pub fn create_large_sumac_group_memory_optimized_for_benchmarks(
         );
     }
 
-    Ok((all_admin_groups, all_user_groups))
-}
-
-#[test]
-fn test_large_sumac_group() {
-    let provider = setup_provider();
-    let ciphersuite = CIPHERSUITE;
-
-    let mut all_admins = create_pool_of_users(10, &provider, "Admin".to_owned());
-    let mut all_users = create_pool_of_users(10, &provider, "User".to_owned());
-
-    let (mut all_admin_groups, mut all_user_groups) =
-        create_large_sumac_group(&provider, ciphersuite, &all_admins, &all_users).unwrap();
-
-    check_sync_sumac(&all_admin_groups, &all_user_groups);
-
-    let new_admin_name = format!("Admin_{}", 10);
-    let new_admin = create_user(new_admin_name.clone(), &provider);
-    all_admins.insert(new_admin_name.clone(), new_admin);
-
-    full_add_admin(
-        &provider,
-        ciphersuite,
-        &all_admins,
-        &mut all_admin_groups,
-        &mut all_user_groups,
-        new_admin_name,
-        "Admin_5".to_owned(),
-    )
-    .unwrap();
-
-    check_sync_sumac(&all_admin_groups, &all_user_groups);
-
-    println!("Add-Admin ok !");
-    let new_user_name = format!("User_{}", 10);
-    let new_user = create_user(new_user_name.clone(), &provider);
-    all_users.insert(new_user_name.clone(), new_user);
-    full_add_user(
-        &provider,
-        ciphersuite,
-        &all_admins,
-        &all_users,
-        &mut all_admin_groups,
-        &mut all_user_groups,
-        new_user_name,
-        "Admin_4".to_owned(),
-    )
-    .unwrap();
+    Ok(SumacState { all_admins, all_users, all_admin_groups, all_user_groups })
 }

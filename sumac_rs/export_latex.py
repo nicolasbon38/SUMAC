@@ -36,7 +36,6 @@ def compute_table(system, operation):
 
             elif system == "sumac":
                 # Format: "<user>_<n_admins>-<n_users>"
-                print(clean_name)
                 user, tup = clean_name.split("_")
                 n_admins, n_users = tup.split("-")
                 records.append({
@@ -64,8 +63,8 @@ def compute_table(system, operation):
 
 BENCHES = {
     "cgka": ["add-user", "remove-user", "update-user"],
-    "sumac": ["add-admin", "add-user", "remove-user", "update-user", "remove-admin"]
-}
+     "sumac": ["add-admin", "add-user", "remove-user", "update-user", "remove-admin", "update-admin"]
+    }
 
 if __name__ == "__main__":
     for system, operations in BENCHES.items():

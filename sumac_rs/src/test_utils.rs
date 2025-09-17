@@ -6,10 +6,10 @@ use openmls_traits::{types::Ciphersuite, OpenMlsProvider};
 use crate::{
     cgka::{CGKAGroup, CommitCGKABroadcast},
     errors::SumacError,
-    sumac::{SumacAdminGroup, SumacUserGroup},
+    sumac::SumacState,
     tmka::{
-        admin_group::{self, TmkaAdminGroup},
-        user_group::{self, TmkaSlaveGroup},
+        admin_group::{TmkaAdminGroup},
+        user_group::{TmkaSlaveGroup},
         CommitTMKABroadcast,
     },
     user::User,
@@ -57,30 +57,42 @@ pub fn check_sync_tmka(admin_group: &TmkaAdminGroup, user_groups: Vec<&TmkaSlave
     true
 }
 
-pub fn check_sync_sumac(
-    all_admins_groups: &HashMap<String, SumacAdminGroup>,
-    all_users_groups: &HashMap<String, SumacUserGroup>,
-) {
-    let vec_cgka = all_admins_groups
-        .into_iter()
-        .map(|sumac_admin_group| sumac_admin_group.1.cgka().clone())
+pub fn check_sync_sumac(state: &SumacState) {
+    // collect CGKAs without moving out of `state`
+    let vec_cgka: Vec<_> = state
+        .all_admin_groups
+        .values()
+        .map(|g| g.cgka().clone())
         .collect();
 
     check_sync_cgka(&vec_cgka);
 
-    for (admin_name, admin_group) in all_admins_groups {
+    // iterate immutably over groups
+    for (admin_name, admin_group) in state.all_admin_groups.iter() {
         let tmka_admin = admin_group.tmka().clone();
-        let mut tmka_users = vec![];
-        for (username, user_group) in all_users_groups {
-            let tmka_user = user_group
-                .forest()
-                .get(admin_name)
-                .expect("Tree of {admin_name} not in the forest of {username}");
-            tmka_users.push(tmka_user);
-        }
+
+        // build users' TMKAs for this admin without moving from `state`
+        let tmka_users: Vec<_> = state
+            .all_user_groups
+            .iter()
+            .map(|(username, user_group)| {
+                user_group
+                    .forest()
+                    .get(admin_name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Tree of {} not in the forest of {}",
+                            admin_name, username
+                        )
+                    })
+                    
+            })
+            .collect();
+
         assert!(check_sync_tmka(&tmka_admin, tmka_users));
     }
 }
+
 
 // Util function for the test
 pub fn process_broadcast_cgka(

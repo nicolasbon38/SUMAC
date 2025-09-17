@@ -15,7 +15,7 @@ use openmls::ciphersuite::Secret as OpenmlsSecret;
 /// Note: This has a hand-written `Debug` implementation.
 ///       Please update as well when changing this struct.
 #[derive(Clone, Eq)]
-pub(crate) struct Secret {
+pub struct Secret {
     value: SecretVLBytes,
 }
 

@@ -1,11 +1,9 @@
 use crate::{
-    crypto::{hpke, secret::Secret},
+    crypto::secret::Secret,
     errors::SumacError,
     tmka::{admin_group::TmkaAdminGroup, user_group::TmkaSlaveGroup, TreeTMKA},
-    user::User,
 };
 use either::Either;
-use openmls::prelude::{BasicCredential, Credential, CredentialWithKey, Secret as MlsSecret};
 use openmls::{
     prelude::{
         Ciphersuite, HpkeCiphertext, LeafNodeIndex, OpenMlsCrypto, ParentNodeIndex, PathSecret,
@@ -13,8 +11,12 @@ use openmls::{
     storage::OpenMlsProvider,
     tree_sumac::{
         nodes::encryption_keys::{PkePrivateKey, PkePublicKey, SymmetricKey},
-        LeafNodeTMKA, OptionLeafNodeTMKA, ParentNodeTMKA, RatchetTree, SumacTree,
+        LeafNodeTMKA, ParentNodeTMKA, RatchetTree,
     },
+};
+use openmls::{
+    prelude::{Credential, Secret as MlsSecret},
+    tree_sumac::NodeVariant,
 };
 
 ///// This structure is only a path, so not usable for add-admin: TODO: faire l'équivalent en forme d'arbre (voir comment on peut le parcourr simplement)
@@ -40,7 +42,6 @@ impl RegenerationSet {
     pub fn encrypt_symmetric(
         &self,
         crypto: &impl OpenMlsCrypto,
-        ciphersuite: Ciphersuite,
         key: &SymmetricKey,
     ) -> EncryptedRegenerationSet {
         let encrypted_secrets = self
@@ -49,16 +50,16 @@ impl RegenerationSet {
             .map(|(index, path_secret)| {
                 (
                     *index,
-                    key.encrypt(crypto, ciphersuite, path_secret.clone().secret().as_slice())
+                    key.encrypt(crypto, path_secret.clone().secret().as_slice())
                         .unwrap(),
                 )
             })
             .collect::<Vec<_>>();
 
-        let encrypted_leaf_secret = self.leaf_secret.as_ref().map(|leaf_secret| {
-            key.encrypt(crypto, ciphersuite, leaf_secret.as_slice().clone())
-                .unwrap()
-        });
+        let encrypted_leaf_secret = self
+            .leaf_secret
+            .as_ref()
+            .map(|leaf_secret| key.encrypt(crypto, leaf_secret.as_slice()).unwrap());
 
         EncryptedRegenerationSet {
             leaf_index: self.leaf_index,
@@ -78,7 +79,6 @@ impl EncryptedRegenerationSet {
     pub fn decrypt_symmetric(
         &self,
         crypto: &impl OpenMlsCrypto,
-        ciphersuite: Ciphersuite,
         key: &SymmetricKey,
     ) -> RegenerationSet {
         let plain_secrets = self
@@ -88,20 +88,14 @@ impl EncryptedRegenerationSet {
                 (
                     *index,
                     PathSecret::from(MlsSecret::from_slice(
-                        key.decrypt(crypto, ciphersuite, path_secret)
-                            .unwrap()
-                            .as_slice(),
+                        key.decrypt(crypto, path_secret).unwrap().as_slice(),
                     )),
                 )
             })
             .collect();
 
         let leaf_secret = self.leaf_secret.as_ref().map(|leaf_secret| {
-            Secret::from_slice(
-                key.decrypt(crypto, ciphersuite, leaf_secret)
-                    .unwrap()
-                    .as_slice(),
-            )
+            Secret::from_slice(key.decrypt(crypto, leaf_secret).unwrap().as_slice())
         });
 
         RegenerationSet {
@@ -114,11 +108,11 @@ impl EncryptedRegenerationSet {
 
 pub type CombinedPath = RegenerationSet;
 
-pub struct EncryptedCombinedPath{
+pub struct EncryptedCombinedPath {
     pub leaf_node_index: LeafNodeIndex,
-    pub indexes : Vec<ParentNodeIndex>,
-    pub ciphertext : HpkeCiphertext,
-    pub with_leaf: bool
+    pub indexes: Vec<ParentNodeIndex>,
+    pub ciphertext: HpkeCiphertext,
+    pub with_leaf: bool,
 }
 pub type EncryptedRegenerationSetHPKE = EncryptedCombinedPath;
 
@@ -129,26 +123,27 @@ impl CombinedPath {
         ciphersuite: Ciphersuite,
         encryption_key: &PkePublicKey,
     ) -> Result<EncryptedCombinedPath, SumacError> {
-
         let mut byte_stream_vec = Vec::new();
         let mut indexes = Vec::new();
         // start by appending the leaf secret
-        let with_leaf = if let Some(leaf_secret) = self.leaf_secret(){
+        let with_leaf = if let Some(leaf_secret) = self.leaf_secret() {
             byte_stream_vec.push(leaf_secret.clone().as_slice().to_vec());
             true
         } else {
             false
         };
         let path_secrets = self.path_secrets.clone();
-        for (index, secret) in path_secrets.into_iter(){
+        for (index, secret) in path_secrets.into_iter() {
             let binding = secret.clone().secret();
             byte_stream_vec.push(binding.as_slice().to_vec());
             indexes.push(index);
         }
 
-        let ciphertext = encryption_key.encrypt(provider.crypto(), ciphersuite, &byte_stream_vec.concat()).expect("Encryption failed");
+        let ciphertext = encryption_key
+            .encrypt(provider.crypto(), ciphersuite, &byte_stream_vec.concat())
+            .expect("Encryption failed");
 
-        Ok(EncryptedCombinedPath{
+        Ok(EncryptedCombinedPath {
             indexes,
             ciphertext,
             leaf_node_index: self.leaf_index,
@@ -157,41 +152,43 @@ impl CombinedPath {
     }
 }
 
-
-
-impl EncryptedCombinedPath{
+impl EncryptedCombinedPath {
     pub fn decrypt(
         &self,
         provider: &impl OpenMlsProvider,
         ciphersuite: Ciphersuite,
         decryption_key: &PkePrivateKey,
-    ) -> Result<RegenerationSet, SumacError>{
+    ) -> Result<RegenerationSet, SumacError> {
         let length = self.indexes.len() + self.with_leaf as usize;
         let size = ciphersuite.hash_length();
-        
-        let raw_plaintext = decryption_key.decrypt_raw(provider.crypto(), ciphersuite, &self.ciphertext).unwrap();
+
+        let raw_plaintext = decryption_key
+            .decrypt_raw(provider.crypto(), ciphersuite, &self.ciphertext)
+            .unwrap();
         assert_eq!(raw_plaintext.len(), size * length);
 
         let mut output = Vec::new();
-        for chunk in raw_plaintext.chunks(size){
+        for chunk in raw_plaintext.chunks(size) {
             let secret = MlsSecret::from_slice(chunk);
             output.push(PathSecret::from(secret));
         }
 
-        let (leaf_secret, path_secrets) = if self.with_leaf{
+        let (leaf_secret, path_secrets) = if self.with_leaf {
             let binding = output.remove(0);
             (Some(binding), output)
-        }else{
+        } else {
             (None, output)
         };
 
         assert_eq!(path_secrets.len(), self.indexes.len());
-    
 
-        Ok(RegenerationSet { leaf_index: self.leaf_node_index, leaf_secret: leaf_secret.map(|l| l.secret().into()), path_secrets: self.indexes.clone().into_iter().zip(path_secrets).collect() })
+        Ok(RegenerationSet {
+            leaf_index: self.leaf_node_index,
+            leaf_secret: leaf_secret.map(|l| l.secret().into()),
+            path_secrets: self.indexes.clone().into_iter().zip(path_secrets).collect(),
+        })
     }
 }
-
 
 ///// Interfaces with the TMKA groups
 
@@ -242,7 +239,7 @@ impl TmkaAdminGroup {
                     },
                     |parent| {
                         parent
-                            .derive__whole_parent_regeneration(provider.crypto(), ciphersuite)
+                            .derive_whole_parent_regeneration(provider.crypto(), ciphersuite)
                             .unwrap()
                     },
                 )
@@ -261,6 +258,7 @@ impl TmkaAdminGroup {
         provider: &impl OpenMlsProvider,
         ciphersuite: Ciphersuite,
         regeneration_set: &RegenerationSet,
+        replace_leaf_in_place: bool,
     ) -> CombinedPath {
         let mut diff = self.tree.empty_diff();
         let (regenerated_leaf, regenerated_secrets, commit_secret) = diff
@@ -277,6 +275,7 @@ impl TmkaAdminGroup {
                     .iter()
                     .map(|(index, path_secret)| (*index, path_secret.clone().secret()))
                     .collect(),
+                replace_leaf_in_place,
             )
             .expect("Absorbtion failed");
         self.tree.merge_diff(diff.into_staged_diff().unwrap());
@@ -289,6 +288,74 @@ impl TmkaAdminGroup {
                 .map(|content| Into::<Secret>::into(content.leaf_secret().clone())),
             path_secrets: regenerated_secrets,
         }
+    }
+
+    pub(crate) fn absorb_regeneration_tree(
+        &mut self,
+        provider: &impl OpenMlsProvider,
+        ciphersuite: Ciphersuite,
+        regeneration_tree: RegenerationTree,
+    ) -> Result<Secret, SumacError> {
+        let old_tree = self.tree.export_ratchet_tree();
+
+        let mut output = vec![];
+
+        for (old_node, regen_node) in old_tree.iter().zip(regeneration_tree.tree.iter()) {
+            let new_node = match (old_node, regen_node) {
+                (Some(old_node), Some(regen_node)) => match (old_node, regen_node) {
+                    (Either::Left(old_leaf), Either::Left(regen_leaf)) => old_leaf
+                        .absorb_regeneration_secret(
+                            provider.crypto(),
+                            ciphersuite,
+                            regen_leaf.leaf_secret().clone(),
+                        )
+                        .map_err(|e| SumacError::CryptoError(e))
+                        .map(|leaf_node| Some(NodeVariant::Left(leaf_node))),
+                    (Either::Right(old_parent), Either::Right(regen_parent)) => old_parent
+                        .absorb_regeneration_secret(
+                            provider.crypto(),
+                            ciphersuite,
+                            regen_parent
+                                .path_secret()
+                                .clone()
+                                .expect("there should be a secret, because this is the admin tree")
+                                .secret(),
+                        )
+                        .map_err(|e| SumacError::CryptoError(e))
+                        .map(|parent_node| Some(NodeVariant::Right(parent_node))),
+                    _ => Err(SumacError::TrueSumacError(
+                        "The regeneration tree does njot have the same layout as the original one"
+                            .to_owned(),
+                    )),
+                },
+                (None, None) => Ok(None),
+                _ => Err(SumacError::TrueSumacError(
+                    "The regeneration tree does njot have the same layout as the original one"
+                        .to_owned(),
+                )),
+            }?;
+            output.push(new_node);
+        }
+
+        let index_root_in_ratchet = (output.len() - 1) / 2;
+        let root_node = output
+            .get(index_root_in_ratchet)
+            .expect("The root should be full")
+            .clone()
+            .expect("The root should really be full");
+        let final_secret = match root_node {
+            Either::Left(_) => panic!("This should be a parent node"),
+            Either::Right(actual_node) => actual_node
+                .path_secret()
+                .clone()
+                .expect("The nsecret should be set"),
+        };
+        let commit_secret = final_secret.derive_path_secret(provider.crypto(), ciphersuite)?;
+
+        let new_tree = TreeTMKA::from_ratchet_tree(RatchetTree::new(output));
+        self.tree = new_tree;
+
+        Ok(commit_secret.secret().into())
     }
 }
 
@@ -345,6 +412,7 @@ impl TmkaSlaveGroup {
                     .iter()
                     .map(|(index, path_secret)| (*index, path_secret.clone().secret()))
                     .collect(),
+                false,
             )
             .unwrap();
 
@@ -359,14 +427,13 @@ pub struct RegenerationTree {
     pub tree: RatchetTree<LeafNodeTMKA, ParentNodeTMKA>,
 }
 
-pub struct EncryptedRegenerationTree{
-    credentials : Vec<Credential>,
-    encrypted_bitstream : HpkeCiphertext,
-    indicators : Vec<bool>
+pub struct EncryptedRegenerationTree {
+    credentials: Vec<Credential>,
+    encrypted_bitstream: HpkeCiphertext,
+    indicators: Vec<bool>,
 }
 
 impl RegenerationTree {
-    //TODO: for now we do not use the full power of hpke. See how to improve this
     pub fn encrypt_hpke(
         &self,
         provider: &impl OpenMlsProvider,
@@ -378,7 +445,7 @@ impl RegenerationTree {
         // concatenate_all_the_secrets in a gigantic bit stream
         let mut byte_stream_vec: Vec<Vec<u8>> = Vec::new();
         let mut indicators = Vec::new();
-        for (i, node) in self.tree.iter().enumerate() {
+        for node in self.tree.iter() {
             if let Some(either) = node {
                 match either {
                     Either::Left(leaf) => {
@@ -395,8 +462,7 @@ impl RegenerationTree {
                     }
                 }
                 indicators.push(true);
-            }
-            else{
+            } else {
                 indicators.push(false);
             }
         }
@@ -405,50 +471,23 @@ impl RegenerationTree {
             .encrypt(provider.crypto(), ciphersuite, &byte_stream_vec.concat())
             .unwrap();
 
-        ///////////////////////////////////////////////////////
-
-        // let encryptions = self.tree
-        //     .iter()
-        //     .map(|node| {
-        //         node.clone().map(|either|{
-        //          let binding = match either {
-        //             Either::Left(leaf) => {
-        //                 credentials.push(leaf.credential().clone());
-        //                 encryption_key
-        //                 .encrypt(
-        //                     provider.crypto(),
-        //                     ciphersuite,
-        //                     leaf.leaf_secret().as_slice(),
-        //                 )
-        //                 .unwrap()},
-        //             Either::Right(parent) => encryption_key
-        //                 .encrypt(
-        //                     provider.crypto(),
-        //                     ciphersuite,
-        //                     parent.path_secret().clone().unwrap().secret().as_slice(),
-        //                 )
-        //                 .unwrap(),
-        //             };
-        //             binding
-        //         })
-
-        //     })
-        //     .collect();
-
-        EncryptedRegenerationTree { credentials, encrypted_bitstream: encryptions, indicators }
+        EncryptedRegenerationTree {
+            credentials,
+            encrypted_bitstream: encryptions,
+            indicators,
+        }
     }
 
     pub fn decrypt_hpke(
         provider: &impl OpenMlsProvider,
         ciphersuite: Ciphersuite,
         decryption_key: &PkePrivateKey,
-        // ciphertexts: Vec<Option<HpkeCiphertext>>,
-        encrypted_regeneration_tree : EncryptedRegenerationTree
+        encrypted_regeneration_tree: EncryptedRegenerationTree,
     ) -> Self {
-        let EncryptedRegenerationTree{
+        let EncryptedRegenerationTree {
             credentials,
             encrypted_bitstream,
-            indicators
+            indicators,
         } = encrypted_regeneration_tree;
         let size_secret = ciphersuite.hash_length();
 
@@ -460,7 +499,7 @@ impl RegenerationTree {
 
         let mut decrypted_vec = Vec::new();
         for (index, chunk) in plaintext.chunks(size_secret).enumerate() {
-            if *indicators.get(index).unwrap(){
+            if *indicators.get(index).unwrap() {
                 let secret = PathSecret::from(MlsSecret::from_slice(chunk));
                 let either = if index % 2 == 0 {
                     //leaf case
@@ -488,47 +527,10 @@ impl RegenerationTree {
                     )
                 };
                 decrypted_vec.push(Some(either));
-
-            } else {decrypted_vec.push(None)}
-           
-
+            } else {
+                decrypted_vec.push(None)
+            }
         }
-
-        // assert_eq!(2 * credentials.len(), ciphertexts.len() + 1);
-
-        // let decrypted_vec = ciphertexts
-        //     .into_iter()
-        //     .enumerate()
-        //     .map(|(index, node)| {
-        //         node.map(|ciphertext| {
-        //             let secret = decryption_key
-        //                 .decrypt(provider.crypto(), ciphersuite, &ciphertext)
-        //                 .unwrap();
-        //             if index % 2 == 0 {
-        //                 //leaf case
-        //                 Either::Left(
-        //                     LeafNodeTMKA::new(
-        //                         provider.crypto(),
-        //                         ciphersuite,
-        //                        credentials.get(index / 2).expect("took the wrong credential").clone(),
-        //                         secret.secret(),
-        //                     )
-        //                     .unwrap(),
-        //                 )
-        //             } else {
-        //                 Either::Right(
-        //                     ParentNodeTMKA::new_from_path_secret(
-        //                         provider.crypto(),
-        //                         ciphersuite,
-        //                         secret,
-        //                         None,
-        //                     )
-        //                     .unwrap(),
-        //                 )
-        //             }
-        //         })
-        //     })
-        //     .collect();
 
         Self {
             tree: RatchetTree::<LeafNodeTMKA, ParentNodeTMKA>::new(decrypted_vec),

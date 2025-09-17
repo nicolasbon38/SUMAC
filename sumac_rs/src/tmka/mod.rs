@@ -3,22 +3,17 @@ use std::collections::HashMap;
 use openmls::{
     prelude::{Ciphersuite, HpkeCiphertext, LeafNodeIndex, PathSecret, Secret as MlsSecret},
     tree_sumac::{
-        nodes::encryption_keys::{PkeKeyPair, SymmetricKey}, LeafNodeTMKA, NodeVariant, OptionLeafNodeTMKA,
-        OptionParentNodeTMKA, ParentNodeTMKA, RatchetTree, SumacTree,
+        nodes::encryption_keys::SymmetricKey,
+        LeafNodeTMKA, NodeVariant, OptionLeafNodeTMKA, OptionParentNodeTMKA, ParentNodeTMKA,
+        RatchetTree, SumacTree,
     },
-    treesync::node::parent_node::UnmergedLeaves,
 };
 
 use openmls_traits::OpenMlsProvider;
-use rand::{rng, seq::IteratorRandom};
 
 use crate::{
     crypto::secret::Secret,
     errors::SumacError,
-    test_utils::{
-        check_sync_tmka, create_pool_of_users, create_user, process_broadcast_tmka, setup_provider,
-        CIPHERSUITE,
-    },
     tmka::{admin_group::TmkaAdminGroup, user_group::TmkaSlaveGroup},
     user::User,
     Operation,
@@ -49,7 +44,12 @@ impl TreeManager {
         .map_err(|err| SumacError::MLSError(err))?;
 
         let commit_secret = leaf_secret.derive_secret(provider.crypto(), ciphersuite)?;
-        let group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;
+        let group_key = SymmetricKey::derive_from_secret(
+            provider.crypto(),
+            ciphersuite,
+            &commit_secret.clone().into(),
+        )
+        .map_err(|e| SumacError::MLSError(e))?;
 
         let tree = TreeTMKA::new(leaf_node.into()).map_err(|err| SumacError::MLSError(err))?;
 
@@ -58,14 +58,14 @@ impl TreeManager {
                 admin: self.clone(),
                 tree: tree.clone(),
                 commit_secret: commit_secret.clone(),
-                group_key: group_key.clone()
+                group_key: group_key.clone(),
             },
             TmkaSlaveGroup {
                 tree,
                 own_leaf_index: LeafNodeIndex::new(0),
                 user: first_user.clone(),
                 commit_secret,
-                group_key
+                group_key,
             },
         ))
     }
@@ -78,8 +78,8 @@ pub struct CommitTMKABroadcast {
     operation: Operation,
 }
 
-impl CommitTMKABroadcast{
-    pub fn target_leaf_index(&self) -> &LeafNodeIndex{
+impl CommitTMKABroadcast {
+    pub fn target_leaf_index(&self) -> &LeafNodeIndex {
         &self.updated_leaf_index
     }
 }
@@ -96,152 +96,12 @@ impl CommitTMKAUnicast {
     }
 }
 
-#[test]
-fn test_tmka() {
-    let mut rng = rng();
-
-    let n_users = 5;
-    let provider = setup_provider();
-    let all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
-    let admin = create_user("Admin".to_owned(), &provider);
-    let mut all_user_groups = HashMap::<String, TmkaSlaveGroup>::new();
-
-    let user_0 = all_users.get("User_0").unwrap();
-    let (mut admin_group, first_user_group) = admin
-        .create_tmka_group(&provider, CIPHERSUITE, user_0)
-        .unwrap();
-
-    all_user_groups.insert("User_0".to_owned(), first_user_group);
-
-    admin_group.print_debug("At creation:");
-
-    (0..n_users)
-        .skip(1)
-        .map(|i| format!("User_{i}"))
-        .for_each(|username| {
-            let new_user = all_users.get(&username).unwrap();
-
-            let (broadcast, welcome) = admin_group
-                .commit(Operation::Add(new_user.clone()), CIPHERSUITE, &provider)
-                .unwrap();
-
-            process_broadcast_tmka(
-                &mut all_user_groups,
-                broadcast,
-                None,
-                &provider,
-                CIPHERSUITE,
-            )
-            .unwrap();
-
-            // process the welcome
-            let new_group = TmkaSlaveGroup::process_welcome(
-                welcome.expect("sHOULD BE A WELCOME"),
-                &provider,
-                CIPHERSUITE,
-                &new_user,
-            )
-            .unwrap();
-
-            all_user_groups.insert(username.clone(), new_group);
-            let check = check_sync_tmka(
-                &admin_group,
-                all_user_groups
-                    .iter()
-                    .map(|(_, group)| group)
-                    .collect::<Vec<_>>(),
-            );
-            if !check {
-                println!("Final state of all the trees");
-                admin_group.print_debug("view of admin:");
-                all_user_groups.iter().for_each(|(username, group)| {
-                    group.print_debug(&format!("View of {}", username))
-                });
-                panic!()
-            }
-        });
-
-    for _ in 0..n_users - 1{
-        let username_to_update = all_user_groups.keys().choose(&mut rng).unwrap().clone();
-        let user_to_update = all_users.get(&username_to_update).unwrap();
-
-        println!("Updating {username_to_update}");
-        let (broadcast, unicast) = admin_group.commit(
-            Operation::Update(user_to_update.clone()),
-            CIPHERSUITE,
-            &provider,
-        ).unwrap();
-
-        process_broadcast_tmka(
-            &mut all_user_groups,
-            broadcast,
-            Some(&username_to_update),
-            &provider,
-            CIPHERSUITE,
-        ).unwrap();
-
-        //process update on the target
-        all_user_groups.get_mut(&username_to_update).unwrap().process_self_update(unicast.unwrap(), &provider, CIPHERSUITE).unwrap();
-
-
-        let check = check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>());
-        if !check{
-            println!("Final state of all the trees");
-            admin_group.print_debug("view of admin:");
-            all_user_groups.iter().for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
-            panic!() 
-        }
-    }
-
-    for _ in (0..n_users - 3) {
-        let username_to_delete = all_user_groups.keys().choose(&mut rng).unwrap().clone();
-        println!("Removing {username_to_delete}");
-        let user_to_delete = all_users.get(&username_to_delete).unwrap();
-
-        let (broadcast, _) = admin_group
-            .commit(
-                Operation::Remove(user_to_delete.clone()),
-                CIPHERSUITE,
-                &provider,
-            )
-            .unwrap();
-
-        process_broadcast_tmka(
-            &mut all_user_groups,
-            broadcast,
-            Some(&username_to_delete),
-            &provider,
-            CIPHERSUITE,
-        )
-        .unwrap();
-
-        all_user_groups.remove(&username_to_delete);
-
-        let check = check_sync_tmka(
-            &admin_group,
-            all_user_groups
-                .iter()
-                .map(|(_, group)| group)
-                .collect::<Vec<_>>(),
-        );
-        if !check {
-            println!("Final state of all the trees");
-            admin_group.print_debug("view of admin:");
-            all_user_groups
-                .iter()
-                .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
-            panic!()
-        }
-    }
-}
-
 pub fn generate_random_tmka(
     provider: &impl OpenMlsProvider,
     ciphersuite: Ciphersuite,
     admin: &User,
     all_users: &HashMap<String, User>,
 ) -> Result<(TmkaAdminGroup, HashMap<String, TmkaSlaveGroup>), SumacError> {
-
     let n_users = all_users.len();
     let n_nodes = 2 * n_users - 1;
 
@@ -277,7 +137,12 @@ pub fn generate_random_tmka(
     let ratchet_tree = RatchetTree::<LeafNodeTMKA, ParentNodeTMKA>::new(vector_nodes.clone());
     let tree = TreeTMKA::from_ratchet_tree(ratchet_tree);
     let commit_secret = Secret::random(ciphersuite, provider.rand())?;
-    let group_key =  SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;  
+    let group_key = SymmetricKey::derive_from_secret(
+        provider.crypto(),
+        ciphersuite,
+        &commit_secret.clone().into(),
+    )
+    .map_err(|e| SumacError::MLSError(e))?;
 
     let mut all_user_groups = HashMap::new();
 
@@ -294,7 +159,11 @@ pub fn generate_random_tmka(
 
         for index_parent in path {
             let index_parent_in_vec = index_parent.usize() * 2 + 1;
-            let filled_parent = vector_nodes.get(index_parent_in_vec).unwrap().clone().unwrap();
+            let filled_parent = vector_nodes
+                .get(index_parent_in_vec)
+                .unwrap()
+                .clone()
+                .unwrap();
 
             match filled_parent {
                 either::Either::Left(_) => panic!(),
@@ -305,7 +174,11 @@ pub fn generate_random_tmka(
         }
 
         let index_leaf_in_vec = 2 * i;
-        let filled_leaf = vector_nodes.get(index_leaf_in_vec).unwrap().clone().unwrap();
+        let filled_leaf = vector_nodes
+            .get(index_leaf_in_vec)
+            .unwrap()
+            .clone()
+            .unwrap();
         match filled_leaf {
             either::Either::Left(leaf) => {
                 diff.just_replace_leaf(leaf.into(), LeafNodeIndex::new(i.try_into().unwrap()))
@@ -320,31 +193,28 @@ pub fn generate_random_tmka(
             own_leaf_index: LeafNodeIndex::new(i.try_into().unwrap()),
             user: user.clone(),
             commit_secret: commit_secret.clone(),
-            group_key: group_key.clone()
+            group_key: group_key.clone(),
         };
-        all_user_groups
-            .insert(username, user_group);
+        all_user_groups.insert(username, user_group);
     }
 
     let admin_group = TmkaAdminGroup {
         admin: admin.clone(),
         tree,
         commit_secret,
-        group_key
+        group_key,
     };
 
     Ok((admin_group, all_user_groups))
 }
-
 
 pub fn generate_random_tmka_memory_optimized_for_benchmarks(
     provider: &impl OpenMlsProvider,
     ciphersuite: Ciphersuite,
     admin: &User,
     all_users: &HashMap<String, User>,
-    actual_users_to_compute : &Vec<usize>
+    actual_users_to_compute: &Vec<usize>,
 ) -> Result<(TmkaAdminGroup, HashMap<String, TmkaSlaveGroup>), SumacError> {
-
     let n_users = all_users.len();
     let n_nodes = 2 * n_users - 1;
 
@@ -380,10 +250,14 @@ pub fn generate_random_tmka_memory_optimized_for_benchmarks(
     let ratchet_tree = RatchetTree::<LeafNodeTMKA, ParentNodeTMKA>::new(vector_nodes.clone());
     let tree = TreeTMKA::from_ratchet_tree(ratchet_tree);
     let commit_secret = Secret::random(ciphersuite, provider.rand())?;
-    let group_key =  SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;  
+    let group_key = SymmetricKey::derive_from_secret(
+        provider.crypto(),
+        ciphersuite,
+        &commit_secret.clone().into(),
+    )
+    .map_err(|e| SumacError::MLSError(e))?;
 
     let mut all_user_groups = HashMap::new();
-
 
     for i in actual_users_to_compute {
         let username = format!("User_{}", i);
@@ -398,7 +272,11 @@ pub fn generate_random_tmka_memory_optimized_for_benchmarks(
 
         for index_parent in path {
             let index_parent_in_vec = index_parent.usize() * 2 + 1;
-            let filled_parent = vector_nodes.get(index_parent_in_vec).unwrap().clone().unwrap();
+            let filled_parent = vector_nodes
+                .get(index_parent_in_vec)
+                .unwrap()
+                .clone()
+                .unwrap();
 
             match filled_parent {
                 either::Either::Left(_) => panic!(),
@@ -409,7 +287,11 @@ pub fn generate_random_tmka_memory_optimized_for_benchmarks(
         }
 
         let index_leaf_in_vec = 2 * i;
-        let filled_leaf = vector_nodes.get(index_leaf_in_vec).unwrap().clone().unwrap();
+        let filled_leaf = vector_nodes
+            .get(index_leaf_in_vec)
+            .unwrap()
+            .clone()
+            .unwrap();
         match filled_leaf {
             either::Either::Left(leaf) => {
                 diff.just_replace_leaf(leaf.into(), LeafNodeIndex::new((*i).try_into().unwrap()))
@@ -424,67 +306,262 @@ pub fn generate_random_tmka_memory_optimized_for_benchmarks(
             own_leaf_index: LeafNodeIndex::new((*i).try_into().unwrap()),
             user: user.clone(),
             commit_secret: commit_secret.clone(),
-            group_key: group_key.clone()
+            group_key: group_key.clone(),
         };
-        all_user_groups
-            .insert(username, user_group);
+        all_user_groups.insert(username, user_group);
     }
 
     let admin_group = TmkaAdminGroup {
         admin: admin.clone(),
         tree,
         commit_secret,
-        group_key
+        group_key,
     };
 
     Ok((admin_group, all_user_groups))
 }
 
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
 
+    use rand::{rng, seq::IteratorRandom};
 
+    use crate::{test_utils::{check_sync_tmka, create_pool_of_users, create_user, process_broadcast_tmka, setup_provider, CIPHERSUITE}, tmka::{generate_random_tmka, user_group::TmkaSlaveGroup}, Operation};
 
-#[test]
-fn test_create_large_tmka() {
-    let mut rng = rng();
+    #[test]
+    fn test_tmka() {
+        let mut rng = rng();
 
-    let n_users = 20;
-    let provider = setup_provider();
-    let mut all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
+        let n_users = 5;
+        let provider = setup_provider();
+        let all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
+        let admin = create_user("Admin".to_owned(), &provider);
+        let mut all_user_groups = HashMap::<String, TmkaSlaveGroup>::new();
 
-    let admin = create_user("Admin".to_string(), &provider);
+        let user_0 = all_users.get("User_0").unwrap();
+        let (mut admin_group, first_user_group) = admin
+            .create_tmka_group(&provider, CIPHERSUITE, user_0)
+            .unwrap();
 
-    let (mut admin_group, mut all_user_groups) = generate_random_tmka(&provider, CIPHERSUITE, &admin,  &all_users).unwrap();
+        all_user_groups.insert("User_0".to_owned(), first_user_group);
 
-    assert!(check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>()));
-    
+        admin_group.print_debug("At creation:");
 
+        (0..n_users)
+            .skip(1)
+            .map(|i| format!("User_{i}"))
+            .for_each(|username| {
+                let new_user = all_users.get(&username).unwrap();
 
-    let username_to_delete = format!("User_3");
-    let user_to_delete = all_users.get(&username_to_delete).unwrap();
+                let (broadcast, welcome) = admin_group
+                    .commit(Operation::Add(new_user.clone()), CIPHERSUITE, &provider)
+                    .unwrap();
 
-    let (commit_broadcast, _) = admin_group.commit(Operation::Remove(user_to_delete.clone()), CIPHERSUITE,  &provider).unwrap();
-    process_broadcast_tmka(&mut all_user_groups, commit_broadcast, Some("User_3"), &provider, CIPHERSUITE).unwrap();
-    all_user_groups.remove(&username_to_delete);
+                process_broadcast_tmka(
+                    &mut all_user_groups,
+                    broadcast,
+                    None,
+                    &provider,
+                    CIPHERSUITE,
+                )
+                .unwrap();
 
+                // process the welcome
+                let new_group = TmkaSlaveGroup::process_welcome(
+                    welcome.expect("sHOULD BE A WELCOME"),
+                    &provider,
+                    CIPHERSUITE,
+                    &new_user,
+                )
+                .unwrap();
 
-    assert!(check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>()));
+                all_user_groups.insert(username.clone(), new_group);
+                let check = check_sync_tmka(
+                    &admin_group,
+                    all_user_groups
+                        .iter()
+                        .map(|(_, group)| group)
+                        .collect::<Vec<_>>(),
+                );
+                if !check {
+                    println!("Final state of all the trees");
+                    admin_group.print_debug("view of admin:");
+                    all_user_groups.iter().for_each(|(username, group)| {
+                        group.print_debug(&format!("View of {}", username))
+                    });
+                    panic!()
+                }
+            });
 
+        for _ in 0..n_users - 1 {
+            let username_to_update = all_user_groups.keys().choose(&mut rng).unwrap().clone();
+            let user_to_update = all_users.get(&username_to_update).unwrap();
 
+            println!("Updating {username_to_update}");
+            let (broadcast, unicast) = admin_group
+                .commit(
+                    Operation::Update(user_to_update.clone()),
+                    CIPHERSUITE,
+                    &provider,
+                )
+                .unwrap();
 
-    let new_username = format!("User_{}", n_users);
-    let new_user = create_user(new_username.clone(), &provider);
-    all_users.insert(new_username.clone(), new_user.clone());
+            process_broadcast_tmka(
+                &mut all_user_groups,
+                broadcast,
+                Some(&username_to_update),
+                &provider,
+                CIPHERSUITE,
+            )
+            .unwrap();
 
-    let (commit_broadcast, commit_unicast) = admin_group.commit(Operation::Add(new_user.clone()), CIPHERSUITE,  &provider).unwrap();
+            //process update on the target
+            all_user_groups
+                .get_mut(&username_to_update)
+                .unwrap()
+                .process_self_update(unicast.unwrap(), &provider, CIPHERSUITE)
+                .unwrap();
 
-    process_broadcast_tmka(&mut all_user_groups, commit_broadcast, None, &provider, CIPHERSUITE).unwrap();
+            let check = check_sync_tmka(
+                &admin_group,
+                all_user_groups
+                    .iter()
+                    .map(|(_, group)| group)
+                    .collect::<Vec<_>>(),
+            );
+            if !check {
+                println!("Final state of all the trees");
+                admin_group.print_debug("view of admin:");
+                all_user_groups.iter().for_each(|(username, group)| {
+                    group.print_debug(&format!("View of {}", username))
+                });
+                panic!()
+            }
+        }
 
-    let new_group = TmkaSlaveGroup::process_welcome(commit_unicast.unwrap(), &provider, CIPHERSUITE, &new_user).unwrap();
+        for _ in 0..n_users - 3 {
+            let username_to_delete = all_user_groups.keys().choose(&mut rng).unwrap().clone();
+            println!("Removing {username_to_delete}");
+            let user_to_delete = all_users.get(&username_to_delete).unwrap();
 
-    all_user_groups.insert(new_username, new_group);
+            let (broadcast, _) = admin_group
+                .commit(
+                    Operation::Remove(user_to_delete.clone()),
+                    CIPHERSUITE,
+                    &provider,
+                )
+                .unwrap();
 
-    assert!(check_sync_tmka(&admin_group, all_user_groups.iter().map(|(_, group)| group).collect::<Vec<_>>()));
+            process_broadcast_tmka(
+                &mut all_user_groups,
+                broadcast,
+                Some(&username_to_delete),
+                &provider,
+                CIPHERSUITE,
+            )
+            .unwrap();
 
+            all_user_groups.remove(&username_to_delete);
 
+            let check = check_sync_tmka(
+                &admin_group,
+                all_user_groups
+                    .iter()
+                    .map(|(_, group)| group)
+                    .collect::<Vec<_>>(),
+            );
+            if !check {
+                println!("Final state of all the trees");
+                admin_group.print_debug("view of admin:");
+                all_user_groups.iter().for_each(|(username, group)| {
+                    group.print_debug(&format!("View of {}", username))
+                });
+                panic!()
+            }
+        }
+    }
 
+    #[test]
+    fn test_create_large_tmka() {
+        let n_users = 20;
+        let provider = setup_provider();
+        let mut all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
+
+        let admin = create_user("Admin".to_string(), &provider);
+
+        let (mut admin_group, mut all_user_groups) =
+            generate_random_tmka(&provider, CIPHERSUITE, &admin, &all_users).unwrap();
+
+        assert!(check_sync_tmka(
+            &admin_group,
+            all_user_groups
+                .iter()
+                .map(|(_, group)| group)
+                .collect::<Vec<_>>()
+        ));
+
+        let username_to_delete = format!("User_3");
+        let user_to_delete = all_users.get(&username_to_delete).unwrap();
+
+        let (commit_broadcast, _) = admin_group
+            .commit(
+                Operation::Remove(user_to_delete.clone()),
+                CIPHERSUITE,
+                &provider,
+            )
+            .unwrap();
+        process_broadcast_tmka(
+            &mut all_user_groups,
+            commit_broadcast,
+            Some("User_3"),
+            &provider,
+            CIPHERSUITE,
+        )
+        .unwrap();
+        all_user_groups.remove(&username_to_delete);
+
+        assert!(check_sync_tmka(
+            &admin_group,
+            all_user_groups
+                .iter()
+                .map(|(_, group)| group)
+                .collect::<Vec<_>>()
+        ));
+
+        let new_username = format!("User_{}", n_users);
+        let new_user = create_user(new_username.clone(), &provider);
+        all_users.insert(new_username.clone(), new_user.clone());
+
+        let (commit_broadcast, commit_unicast) = admin_group
+            .commit(Operation::Add(new_user.clone()), CIPHERSUITE, &provider)
+            .unwrap();
+
+        process_broadcast_tmka(
+            &mut all_user_groups,
+            commit_broadcast,
+            None,
+            &provider,
+            CIPHERSUITE,
+        )
+        .unwrap();
+
+        let new_group = TmkaSlaveGroup::process_welcome(
+            commit_unicast.unwrap(),
+            &provider,
+            CIPHERSUITE,
+            &new_user,
+        )
+        .unwrap();
+
+        all_user_groups.insert(new_username, new_group);
+
+        assert!(check_sync_tmka(
+            &admin_group,
+            all_user_groups
+                .iter()
+                .map(|(_, group)| group)
+                .collect::<Vec<_>>()
+        ));
+    }
 }

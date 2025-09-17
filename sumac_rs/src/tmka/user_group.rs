@@ -1,17 +1,13 @@
-use std::collections::HashSet;
-
 use openmls::prelude::{ParentNodeIndex, Secret as MlsSecret};
 use openmls::tree_sumac::nodes::traits::OptionNode;
 use openmls::tree_sumac::OptionLeafNodeTMKA;
 use openmls::{
-    error::LibraryError,
     prelude::{Ciphersuite, LeafNodeIndex, PathSecret},
     tree_sumac::{
         nodes::{
             encryption_keys::{KeyPairRef, SymmetricKey},
             traits::{Parent, White},
         },
-        treekem::DecryptPathParams,
         LeafNodeTMKA, ParentNodeTMKA,
     },
 };
@@ -70,7 +66,7 @@ impl TmkaSlaveGroup {
             },
         }
 
-        let path_secret = diff.decrypt_path_secret_from_update_path(provider.crypto(), ciphersuite, encrypted_path_secrets, updated_leaf_index, &self.own_leaf_index);
+        let path_secret = diff.decrypt_path_secret_from_update_path(provider.crypto(), encrypted_path_secrets, updated_leaf_index, &self.own_leaf_index);
 
         let path_indices =
             diff.filtered_common_direct_path(self.own_leaf_index, *updated_leaf_index);

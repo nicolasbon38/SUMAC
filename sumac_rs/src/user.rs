@@ -47,7 +47,7 @@ impl User {
             .ok_or(SumacError::TrueSumacError("KeyPackage has not been built yet".to_owned()))
     }
 
-    fn private_key_hpke(&self) -> Result<HPKEPrivateKey, SumacError>{
+    fn _private_key_hpke(&self) -> Result<HPKEPrivateKey, SumacError>{
        self.encryption_keypair().map(|pair| pair.private_key().clone())
     }
 

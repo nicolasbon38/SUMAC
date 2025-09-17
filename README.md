@@ -24,3 +24,4 @@ Depending on your setup, benches can take a while to run. Every operation is run
 
 **Disclaimer**: This software is a prototype implementation. Do not use it in production environments.
 
+For Usenix Reviewers, the last commit at submission time was fa0bc9770d00399b89519a413471b9ff2501bf2e. 

@@ -233,7 +233,7 @@ impl<L: Clone + Debug + Default, P: Clone + Debug + Default> AbDiff<'_, L, P> {
         leaf_index_1: LeafNodeIndex,
         leaf_index_2: LeafNodeIndex,
     ) -> ParentNodeIndex {
-        debug_assert!(leaf_index_1 != leaf_index_2);
+        debug_assert!(leaf_index_1 != leaf_index_2, "{leaf_index_1} vs {leaf_index_2}");
         debug_assert!(leaf_index_1.u32() < self.leaf_count());
         debug_assert!(leaf_index_2.u32() < self.leaf_count());
         lowest_common_ancestor(leaf_index_1, leaf_index_2)

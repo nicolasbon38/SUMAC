@@ -27,3 +27,22 @@ impl fmt::Display for SumacError {
 }
 
 impl std::error::Error for SumacError {}
+
+
+impl From<LibraryError> for SumacError {
+    fn from(err: LibraryError) -> Self {
+        SumacError::MLSError(err)
+    }
+}
+
+impl From<CryptoError> for SumacError {
+    fn from(err: CryptoError) -> Self {
+        SumacError::CryptoError(err)
+    }
+}
+
+impl From<SignatureError> for SumacError {
+    fn from(err: SignatureError) -> Self {
+        SumacError::SignatureError(err)
+    }
+}

@@ -1,30 +1,18 @@
 use openmls::treesync::node::parent_node::UnmergedLeaves;
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
-use std::time::Instant;
 
-use openmls::ciphersuite::{self, Secret as MlsSecret};
-use openmls::error::LibraryError;
-use openmls::prelude::{
-    Ciphersuite, Credential, HpkeCiphertext, LeafNodeIndex, OpenMlsCrypto, PathSecret,
-};
+use openmls::prelude::{Ciphersuite, Credential, HpkeCiphertext, LeafNodeIndex};
 use openmls::tree_sumac::nodes::encryption_keys::{KeyPairRef, PkeKeyPair, SymmetricKey};
 use openmls::tree_sumac::nodes::traits::OptionNode;
 use openmls::tree_sumac::treekem::{DecryptPathParams, UpdatePath};
 use openmls::tree_sumac::{LeafNodeCGKA, NodeVariant, OptionLeafNodeCGKA, OptionParentNodeCGKA};
 use openmls::tree_sumac::{ParentNodeCGKA, RatchetTree, SumacTree};
 use openmls_traits::OpenMlsProvider;
-use rand::{rng, Rng};
-use rand::seq::IteratorRandom;
 
-use crate::crypto::hpke::{derive_hpke_keypair, hpke_decrypt_secret, hpke_encrypt_secret};
+use crate::crypto::hpke::{hpke_decrypt_secret, hpke_encrypt_secret};
 use crate::crypto::secret::Secret;
 use crate::crypto::types::HPKEEncryptionKeyPair;
 use crate::errors::SumacError;
-use crate::test_utils::{
-    check_sync_cgka, create_pool_of_users, create_user, process_broadcast_cgka, setup_provider,
-    CIPHERSUITE,
-};
 use crate::user::User;
 use crate::Operation;
 
@@ -37,7 +25,7 @@ pub struct CGKAGroup {
     pub encryption_keypairs: Vec<HPKEEncryptionKeyPair>,
     own_leaf_index: LeafNodeIndex,
     pub commit_secret: Secret,
-    pub group_key: SymmetricKey
+    pub group_key: SymmetricKey,
 }
 
 impl User {
@@ -59,7 +47,12 @@ impl User {
             encryption_keypairs: vec![self.encryption_keypair()?],
             own_leaf_index: LeafNodeIndex::new(0),
             commit_secret: commit_secret.clone(),
-            group_key: SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.into()).map_err(|e| SumacError::MLSError(e))?
+            group_key: SymmetricKey::derive_from_secret(
+                provider.crypto(),
+                ciphersuite,
+                &commit_secret.into(),
+            )
+            .map_err(|e| SumacError::MLSError(e))?,
         })
     }
 }
@@ -133,11 +126,33 @@ impl CGKAGroup {
                 leaf_index
             }
 
-            Operation::Update(user) => {
-                // do nothing. Everything is carried on by the rest
-                assert_eq!(user.credential(), self.user.credential());
-                self.own_leaf_index
-            }
+            Operation::Update(user_updated) => {    // assume that the  keypackage of the new user has already been updated
+                let leaf_index = self
+                .tree
+                .leaves()
+                .find_map(|(index, leaf)| {
+                    leaf.node().clone().and_then(|actual_leaf| {
+                        if actual_leaf.credential().serialized_content()
+                            == Into::<Credential>::into(user_updated.credential().clone())
+                                .serialized_content()
+                        {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .ok_or(SumacError::TrueSumacError(
+                    "Leaf to be removed not found".to_owned(),
+                ))?;
+
+                let key_package_new_user = user_updated.key_package()?;
+
+                let new_leaf = key_package_new_user.leaf_node_cgka().clone();
+
+                diff.update_leaf(new_leaf.into(), leaf_index);
+                leaf_index
+            }      
         };
 
         let credential_with_key = self.user.credential_with_key().clone();
@@ -159,7 +174,12 @@ impl CGKAGroup {
             )
             .expect("Failed to compute update path");
 
-        self.group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().secret()).map_err(|e| SumacError::MLSError(e))?;
+        self.group_key = SymmetricKey::derive_from_secret(
+            provider.crypto(),
+            ciphersuite,
+            &commit_secret.clone().secret(),
+        )
+        .map_err(|e| SumacError::MLSError(e))?;
         self.commit_secret = commit_secret.secret().into();
 
         let exclusion_list = HashSet::new();
@@ -225,7 +245,7 @@ impl CGKAGroup {
                 self.tree
                     .merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
                 None
-            }
+            },
         };
 
         Ok((commit_broadcast, welcome))
@@ -258,14 +278,15 @@ impl CGKAGroup {
             Operation::Remove(_) => {
                 diff.blank_leaf(*updated_leaf_index);
             }
-            Operation::Update(_) => {
-                //nothing to do
+            Operation::Update(user_updated) => {   // assume that a new key package has been regenerated for the user
+                let key_package = user_updated.key_package()?;
+                let new_leaf = key_package.leaf_node_cgka().clone();
+                
+                diff.update_leaf(new_leaf.into(), commit.updated_leaf_index);
             }
         };
 
         diff.apply_received_update_path(
-            provider.crypto(),
-            ciphersuite,
             *sender_leaf_index,
             &encrypted_update_path,
         )
@@ -295,7 +316,9 @@ impl CGKAGroup {
             .map_err(|e| SumacError::MLSError(e))?;
 
         self.encryption_keypairs.extend(new_encryption_keypairs);
-        self.group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret).map_err(|e| SumacError::MLSError(e))?;
+        self.group_key =
+            SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret)
+                .map_err(|e| SumacError::MLSError(e))?;
         self.commit_secret = commit_secret.secret().into();
         self.tree
             .merge_diff(diff.into_staged_diff().expect("Failed to stage the diff"));
@@ -337,7 +360,9 @@ impl CGKAGroup {
         let mut owned_keypairs = vec![user.encryption_keypair()?];
         owned_keypairs.extend(encryption_keypairs);
 
-        let group_key = SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret).map_err(|e| SumacError::MLSError(e))?;
+        let group_key =
+            SymmetricKey::derive_from_path_secret(provider.crypto(), ciphersuite, &commit_secret)
+                .map_err(|e| SumacError::MLSError(e))?;
 
         Ok(Self {
             user,
@@ -345,64 +370,137 @@ impl CGKAGroup {
             encryption_keypairs: owned_keypairs,
             own_leaf_index: new_member_index,
             commit_secret: commit_secret.secret().into(),
-            group_key
+            group_key,
         })
     }
+
+
+    pub fn process_own_update(
+        &mut self, 
+        provider: &impl OpenMlsProvider,
+        ciphersuite: Ciphersuite,
+        updated_user :& User,
+        commit_broadcast: CommitCGKABroadcast
+    ) -> Result<(), SumacError>{    // Assume that its own key package has been updated
+        assert_eq!(self.user.identity(), updated_user.identity());
+        self.user = updated_user.clone();
+
+        self.encryption_keypairs.push(self.user.encryption_keypair()?.clone());
+
+        // then process the broadcast
+        self.process(&commit_broadcast, provider, ciphersuite)?;
+
+        Ok(())
+    } 
 }
 
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, time::Instant};
 
-#[test]
-fn test_cgka() {
-    let mut rng = rng();
+    use rand::{rng, seq::IteratorRandom};
 
-    let n_users = 20;
-    let provider = setup_provider();
-    let all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
-    let mut all_groups = HashMap::<String, CGKAGroup>::new();
+    use crate::{
+        cgka::CGKAGroup,
+        test_utils::{
+            check_sync_cgka, create_pool_of_users, create_user, process_broadcast_cgka,
+            setup_provider, CIPHERSUITE,
+        },
+        Operation,
+    };
 
-    let user_0 = all_users.get("User_0").unwrap();
-    all_groups.insert(
-        "User_0".to_owned(),
-        user_0.create_group(&provider, CIPHERSUITE).unwrap(),
-    );
+    #[test]
+    fn test_cgka() {
+        let mut rng = rng();
 
-    let mut committer_name = String::from("User_0");
+        let n_users = 20;
+        let provider = setup_provider();
+        let mut all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
+        let mut all_groups = HashMap::<String, CGKAGroup>::new();
 
-    (0..n_users)
-        .skip(1)
-        .map(|i| format!("User_{i}"))
-        .for_each(|username| {
-            println!("Adding {username}");
-            let new_user = all_users.get(&username).unwrap();
-            let (broadcast, welcome) = all_groups
+        let user_0 = all_users.get("User_0").unwrap();
+        all_groups.insert(
+            "User_0".to_owned(),
+            user_0.create_group(&provider, CIPHERSUITE).unwrap(),
+        );
+
+        let mut committer_name = String::from("User_0");
+
+        (0..n_users)
+            .skip(1)
+            .map(|i| format!("User_{i}"))
+            .for_each(|username| {
+                println!("Adding {username}");
+                let new_user = all_users.get(&username).unwrap();
+                let (broadcast, welcome) = all_groups
+                    .get_mut(&committer_name)
+                    .unwrap()
+                    .commit(Operation::Add(new_user.clone()), CIPHERSUITE, &provider)
+                    .unwrap();
+
+                // process the broadcast
+                process_broadcast_cgka(
+                    &mut all_groups,
+                    broadcast,
+                    &committer_name,
+                    None,
+                    &provider,
+                    CIPHERSUITE,
+                )
+                .unwrap();
+
+                // process the welcome
+                let new_group = CGKAGroup::process_welcome(
+                    welcome.expect("sHOULD BE A WELCOME"),
+                    &provider,
+                    CIPHERSUITE,
+                    &new_user,
+                )
+                .unwrap();
+
+                all_groups.insert(username.clone(), new_group);
+
+                committer_name = all_groups.keys().choose(&mut rng).unwrap().to_string();
+                all_groups.iter().for_each(|(username, group)| {
+                    group.print_debug(&format!("View of {}", username))
+                });
+                check_sync_cgka(
+                    &all_groups
+                        .iter()
+                        .map(|(_, group)| group.clone())
+                        .collect::<Vec<CGKAGroup>>(),
+                );
+            });
+
+        for _ in 0..n_users {
+            committer_name = all_groups.keys().choose(&mut rng).unwrap().to_string();
+            let username_to_update = all_groups.keys().filter(|username| *username != &committer_name).choose(&mut rng).unwrap().to_string();
+            println!("Updating {username_to_update}");
+
+            
+            let user_to_update = all_users.get_mut(&username_to_update).unwrap();
+            user_to_update.generate_key_package_bundle(CIPHERSUITE,&provider).unwrap();
+
+            let (broadcast, _) = all_groups
                 .get_mut(&committer_name)
                 .unwrap()
-                .commit(Operation::Add(new_user.clone()), CIPHERSUITE, &provider)
+                .commit(Operation::Update(user_to_update.clone()), CIPHERSUITE, &provider)
                 .unwrap();
 
             // process the broadcast
             process_broadcast_cgka(
                 &mut all_groups,
-                broadcast,
+                broadcast.clone(),
                 &committer_name,
-                None,
+                Some(&username_to_update),
                 &provider,
                 CIPHERSUITE,
             )
             .unwrap();
 
-            // process the welcome
-            let new_group = CGKAGroup::process_welcome(
-                welcome.expect("sHOULD BE A WELCOME"),
-                &provider,
-                CIPHERSUITE,
-                &new_user,
-            )
-            .unwrap();
+        // process the auto-update
+        all_groups.get_mut(&username_to_update).unwrap().process_own_update(&provider, CIPHERSUITE, user_to_update, broadcast).unwrap();
 
-            all_groups.insert(username.clone(), new_group);
-
-            committer_name = all_groups.keys().choose(&mut rng).unwrap().to_string();
             all_groups
                 .iter()
                 .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
@@ -412,91 +510,132 @@ fn test_cgka() {
                     .map(|(_, group)| group.clone())
                     .collect::<Vec<CGKAGroup>>(),
             );
-        });
+        }
 
-    for _ in 0..n_users {
-        committer_name = all_groups.keys().choose(&mut rng).unwrap().to_string();
-        let committer = all_users.get(&committer_name).unwrap();
+        for _ in 0..n_users - 3 {
+            let username_to_delete = all_groups.keys().choose(&mut rng).unwrap().clone();
+            let committer_name = all_groups
+                .keys()
+                .filter(|name| **name != username_to_delete)
+                .choose(&mut rng)
+                .unwrap()
+                .clone();
+            println!("Removing {username_to_delete}. COmmitter is {committer_name}");
+            let user_to_delete = all_users.get(&username_to_delete).unwrap();
+            let (broadcast, _) = all_groups
+                .get_mut(&committer_name)
+                .unwrap()
+                .commit(
+                    Operation::Remove(user_to_delete.clone()),
+                    CIPHERSUITE,
+                    &provider,
+                )
+                .unwrap();
 
-        let (broadcast, _) = all_groups
-            .get_mut(&committer_name)
-            .unwrap()
-            .commit(Operation::Update(committer.clone()), CIPHERSUITE, &provider)
+            // process the broadcast
+            process_broadcast_cgka(
+                &mut all_groups,
+                broadcast,
+                &committer_name,
+                Some(&username_to_delete),
+                &provider,
+                CIPHERSUITE,
+            )
             .unwrap();
 
-        // process the broadcast
+            all_groups.remove(&username_to_delete);
+
+            all_groups
+                .iter()
+                .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
+            check_sync_cgka(
+                &all_groups
+                    .iter()
+                    .map(|(_, group)| group.clone())
+                    .collect::<Vec<CGKAGroup>>(),
+            );
+        }
+
+        println!("Final state of all the trees");
+        all_groups
+            .iter()
+            .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
+
+        check_sync_cgka(
+            &all_groups
+                .into_iter()
+                .map(|(_, group)| group)
+                .collect::<Vec<CGKAGroup>>(),
+        );
+    }
+
+    #[test]
+    fn test_create_large_cgka() {
+        let mut rng = rng();
+
+        let n_users = 1000;
+        let provider = setup_provider();
+        let mut all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
+
+        let mut all_groups = CGKAGroup::generate_random_group(
+            &provider,
+            CIPHERSUITE,
+            &all_users,
+            "User".to_string(),
+        )
+        .unwrap();
+
+        check_sync_cgka(
+            &all_groups
+                .iter()
+                .map(|(_, group)| group.clone())
+                .collect::<Vec<CGKAGroup>>(),
+        );
+
+        let committer_name = all_groups.keys().choose(&mut rng).unwrap().to_string();
+
+        let new_username = format!("User_{}", n_users);
+        let new_user = create_user(new_username.clone(), &provider);
+        all_users.insert(new_username.clone(), new_user.clone());
+
+        let start = Instant::now();
+        let (commit_broadcast, commit_unicast) = all_groups
+            .get_mut(&committer_name)
+            .unwrap()
+            .commit(Operation::Add(new_user.clone()), CIPHERSUITE, &provider)
+            .unwrap();
+        let stop = start.elapsed();
+        println!("Committer:{stop:?}");
+
+        let start = Instant::now();
         process_broadcast_cgka(
             &mut all_groups,
-            broadcast,
+            commit_broadcast,
             &committer_name,
             None,
             &provider,
             CIPHERSUITE,
         )
         .unwrap();
+        let stop = start.elapsed();
+        println!("Broadcast:{stop:?}");
 
-        all_groups
-            .iter()
-            .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
+        let start = Instant::now();
+        let new_group =
+            CGKAGroup::process_welcome(commit_unicast.unwrap(), &provider, CIPHERSUITE, &new_user)
+                .unwrap();
+        let stop = start.elapsed();
+        println!("New Groupt:{stop:?}");
+
+        all_groups.insert(new_username, new_group);
+
         check_sync_cgka(
             &all_groups
-                .iter()
-                .map(|(_, group)| group.clone())
+                .into_iter()
+                .map(|(_, group)| group)
                 .collect::<Vec<CGKAGroup>>(),
         );
     }
-
-
-    for _ in 0..n_users - 3{
-        let username_to_delete = all_groups.keys().choose(&mut rng).unwrap().clone();
-        let committer_name = all_groups.keys().filter(|name| **name != username_to_delete).choose(&mut rng).unwrap().clone();
-        println!("Removing {username_to_delete}. COmmitter is {committer_name}");
-        let user_to_delete = all_users.get(&username_to_delete).unwrap();
-        let (broadcast, _) = all_groups
-            .get_mut(&committer_name)
-            .unwrap()
-            .commit(
-                Operation::Remove(user_to_delete.clone()),
-                CIPHERSUITE,
-                &provider,
-            )
-            .unwrap();
-
-        // process the broadcast
-        process_broadcast_cgka(
-            &mut all_groups,
-            broadcast,
-            &committer_name,
-            Some(&username_to_delete),
-            &provider,
-            CIPHERSUITE,
-        )
-        .unwrap();
-
-        all_groups.remove(&username_to_delete);
-
-        all_groups
-            .iter()
-            .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
-        check_sync_cgka(
-            &all_groups
-                .iter()
-                .map(|(_, group)| group.clone())
-                .collect::<Vec<CGKAGroup>>(),
-        );
-    }
-
-    println!("Final state of all the trees");
-    all_groups
-        .iter()
-        .for_each(|(username, group)| group.print_debug(&format!("View of {}", username)));
-
-    check_sync_cgka(
-        &all_groups
-            .into_iter()
-            .map(|(_, group)| group)
-            .collect::<Vec<CGKAGroup>>(),
-    );
 }
 
 impl CGKAGroup {
@@ -504,7 +643,7 @@ impl CGKAGroup {
         provider: &impl OpenMlsProvider,
         ciphersuite: Ciphersuite,
         all_users: &HashMap<String, User>,
-        prefix_user: String
+        prefix_user: String,
     ) -> Result<HashMap<String, Self>, SumacError> {
         let n_users = all_users.len();
         let n_nodes = 2 * n_users - 1;
@@ -515,7 +654,9 @@ impl CGKAGroup {
             if i % 2 == 0 {
                 //leaf
                 let username = format!("{}_{}", prefix_user, i / 2);
-                let user = all_users.get(&username).expect(&format!("{} not in the pool", username));
+                let user = all_users
+                    .get(&username)
+                    .expect(&format!("{} not in the pool", username));
                 let leaf_node = LeafNodeCGKA::new(
                     user.credential_with_key().clone(),
                     user.encryption_keypair()?.public_key().clone(),
@@ -538,7 +679,12 @@ impl CGKAGroup {
 
         let mut all_groups = HashMap::new();
         let commit_secret = Secret::random(ciphersuite, provider.rand())?;
-        let group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;
+        let group_key = SymmetricKey::derive_from_secret(
+            provider.crypto(),
+            ciphersuite,
+            &commit_secret.clone().into(),
+        )
+        .map_err(|e| SumacError::MLSError(e))?;
         // manage key ownership
         for i in 0..n_users {
             let username = format!("{}_{}", prefix_user, i);
@@ -558,7 +704,7 @@ impl CGKAGroup {
                 encryption_keypairs: owned_keys,
                 own_leaf_index: LeafNodeIndex::new(i.try_into().unwrap()),
                 commit_secret: commit_secret.clone(),
-                group_key: group_key.clone()
+                group_key: group_key.clone(),
             };
 
             all_groups.insert(username, group);
@@ -571,7 +717,7 @@ impl CGKAGroup {
         ciphersuite: Ciphersuite,
         all_users: &HashMap<String, User>,
         prefix_user: String,
-        actual_admin_to_compute: &Vec<usize>
+        actual_admin_to_compute: &Vec<usize>,
     ) -> Result<HashMap<String, Self>, SumacError> {
         let n_users = all_users.len();
         let n_nodes = 2 * n_users - 1;
@@ -582,7 +728,9 @@ impl CGKAGroup {
             if i % 2 == 0 {
                 //leaf
                 let username = format!("{}_{}", prefix_user, i / 2);
-                let user = all_users.get(&username).expect(&format!("{} not in the pool", username));
+                let user = all_users
+                    .get(&username)
+                    .expect(&format!("{} not in the pool", username));
                 let leaf_node = LeafNodeCGKA::new(
                     user.credential_with_key().clone(),
                     user.encryption_keypair()?.public_key().clone(),
@@ -605,7 +753,12 @@ impl CGKAGroup {
 
         let mut all_groups = HashMap::new();
         let commit_secret = Secret::random(ciphersuite, provider.rand())?;
-        let group_key = SymmetricKey::derive_from_secret(provider.crypto(), ciphersuite, &commit_secret.clone().into()).map_err(|e| SumacError::MLSError(e))?;  
+        let group_key = SymmetricKey::derive_from_secret(
+            provider.crypto(),
+            ciphersuite,
+            &commit_secret.clone().into(),
+        )
+        .map_err(|e| SumacError::MLSError(e))?;
 
         // manage key ownership
         for i in actual_admin_to_compute {
@@ -626,7 +779,7 @@ impl CGKAGroup {
                 encryption_keypairs: owned_keys,
                 own_leaf_index: LeafNodeIndex::new((*i).try_into().unwrap()),
                 commit_secret: commit_secret.clone(),
-                group_key: group_key.clone()
+                group_key: group_key.clone(),
             };
 
             all_groups.insert(username, group);
@@ -634,59 +787,3 @@ impl CGKAGroup {
         Ok(all_groups)
     }
 }
-
-#[test]
-fn test_create_large_cgka() {
-    let mut rng = rng();
-
-    let n_users = 1000;
-    let provider = setup_provider();
-    let mut all_users = create_pool_of_users(n_users, &provider, "User".to_owned());
-
-    let mut all_groups = CGKAGroup::generate_random_group(&provider, CIPHERSUITE, &all_users, "User".to_string()).unwrap();
-
-    check_sync_cgka(
-        &all_groups
-            .iter()
-            .map(|(_, group)| group.clone())
-            .collect::<Vec<CGKAGroup>>(),
-    );
-
-
-    let committer_name = all_groups.keys().choose(&mut rng).unwrap().to_string();
-
-    let new_username = format!("User_{}", n_users);
-    let new_user = create_user(new_username.clone(), &provider);
-    all_users.insert(new_username.clone(), new_user.clone());
-
-    let start = Instant::now();
-    let (commit_broadcast, commit_unicast) = all_groups.get_mut(&committer_name).unwrap().commit(Operation::Add(new_user.clone()), CIPHERSUITE,  &provider).unwrap();
-    let stop = start.elapsed();
-    println!("Committer:{stop:?}");
-    
-    let start = Instant::now();
-    process_broadcast_cgka(&mut all_groups, commit_broadcast, &committer_name, None, &provider, CIPHERSUITE).unwrap();
-    let stop = start.elapsed();
-    println!("Broadcast:{stop:?}");
-
-
-    let start = Instant::now();
-    let new_group = CGKAGroup::process_welcome(commit_unicast.unwrap(), &provider, CIPHERSUITE, &new_user).unwrap();
-    let stop = start.elapsed();
-    println!("New Groupt:{stop:?}");
-
-
-    all_groups.insert(new_username, new_group);
-
-    check_sync_cgka(
-        &all_groups
-            .into_iter()
-            .map(|(_, group)| group)
-            .collect::<Vec<CGKAGroup>>(),
-    );
-}
-
-
-
-
-

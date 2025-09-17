@@ -31,7 +31,6 @@ pub mod signature;
 pub(crate) use aead::*;
 pub(crate) use mac::*;
 pub(crate) use reuse_guard::*;
-pub(crate) use secret::*;
 pub(crate) use signature::*;
 
 pub(crate) use serde::{Deserialize, Serialize};

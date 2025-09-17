@@ -1,4 +1,4 @@
-use std::{fmt::Debug, os::unix::process::parent_id};
+use std::fmt::Debug;
 
 use diff::{StagedSumacTreeDiff, SumacTreeDiff};
 use either::Either;
@@ -11,7 +11,7 @@ use crate::{
         MlsBinaryTree,
     },
     error::LibraryError,
-    prelude::{LeafNodeIndex, ParentNode, PathSecret, Secret}, tree_sumac::nodes::encryption_keys::PkeKeyPair,
+    prelude::{LeafNodeIndex, PathSecret, Secret}, tree_sumac::nodes::encryption_keys::PkeKeyPair,
 };
 
 pub mod nodes;
@@ -43,7 +43,7 @@ where
     L: Clone + Debug + Default + OptionNode,
     P: Clone + Debug + Default + OptionNode,
 {
-    pub fn tree(&self) -> &MlsBinaryTree<L, P> {
+    pub(crate) fn tree(&self) -> &MlsBinaryTree<L, P> {
         &self.tree
     }
 }
@@ -218,7 +218,7 @@ where
         let tree = MlsBinaryTree::<L, P>::new(ts_nodes).expect("Failed to convert the ratchet tree");
         
         
-        let mut sumac_tree = Self {
+        let sumac_tree = Self {
             tree,
         };
 

@@ -1,19 +1,27 @@
 use std::{collections::HashSet, fmt::Debug};
 
+use either::Either;
 use openmls_traits::{
     crypto::OpenMlsCrypto, random::OpenMlsRand, types::Ciphersuite, OpenMlsProvider,
 };
 
 use crate::{
     binary_tree::{
-        array_representation::{ParentNodeIndex, TreeNodeIndex, MIN_TREE_SIZE},
+        array_representation::{tree::TreeNode, ParentNodeIndex, TreeNodeIndex, MIN_TREE_SIZE},
         MlsBinaryTreeDiff, StagedMlsBinaryTreeDiff,
     },
     error::LibraryError,
     prelude::{LeafNodeIndex, PathSecret, Secret},
     tree_sumac::{
-        error::ApplyUpdatePathError, nodes::{encryption_keys::{KeyPairRef, SymmetricKey}, traits::White, PlainUpdatePathNode}, treekem::UpdatePath, LeafNodeTMKA, OptionLeafNodeTMKA, OptionParentNodeTMKA, ParentNodeTMKA
-    }, treesync::node::parent_node::UnmergedLeaves,
+        error::ApplyUpdatePathError,
+        nodes::{
+            encryption_keys::{KeyPairRef, SymmetricKey},
+            traits::White,
+            PlainUpdatePathNode,
+        },
+        treekem::UpdatePath,
+        LeafNodeTMKA, OptionLeafNodeTMKA, OptionParentNodeTMKA, ParentNodeTMKA, RatchetTree,
+    },
 };
 
 use super::{
@@ -54,7 +62,7 @@ where
     L: Clone + Debug + Default + OptionNode,
     P: Clone + Debug + Default + OptionNode,
 {
-    pub diff: MlsBinaryTreeDiff<'a, L, P>,
+    pub(crate) diff: MlsBinaryTreeDiff<'a, L, P>,
 }
 
 impl<'a, L, P> From<&'a SumacTree<L, P>> for SumacTreeDiff<'a, L, P>
@@ -455,7 +463,7 @@ where
         self.process_update_path(leaf_index, path)?;
 
         // We insert the fresh leaf into the tree, if it exists.
-       new_leaf.map(|leaf| self.diff.replace_leaf(leaf_index, leaf.into()));
+        new_leaf.map(|leaf| self.diff.replace_leaf(leaf_index, leaf.into()));
 
         // Prepend parent keypairs with node keypair
         let mut keypairs = vec![];
@@ -472,8 +480,6 @@ where
     /// TODO #804
     pub fn apply_received_update_path(
         &mut self,
-        crypto: &impl OpenMlsCrypto,
-        ciphersuite: Ciphersuite,
         sender_leaf_index: LeafNodeIndex,
         update_path: &UpdatePath<L::Node, P::Node>,
     ) -> Result<(), ApplyUpdatePathError> {
@@ -497,7 +503,10 @@ where
         self.process_update_path(sender_leaf_index, path)?;
 
         // update the leaf
-        self.just_replace_leaf(L::from_concrete_node(update_path.leaf_node().clone()) , sender_leaf_index);
+        self.just_replace_leaf(
+            L::from_concrete_node(update_path.leaf_node().clone()),
+            sender_leaf_index,
+        );
 
         Ok(())
     }
@@ -528,8 +537,6 @@ where
             // The shared subtree root has to be in the direct path of both nodes.
             .ok_or_else(|| LibraryError::custom("index should be in the direct path").into())
     }
-
-
 
     /// Returns the filtered common path two leaf nodes share. If the leaves are
     /// identical, the common path is the leaf's direct path.
@@ -567,12 +574,11 @@ where
         self.diff.set_direct_path_to_node(leaf_index, &P::default());
     }
 
-
-    pub fn just_replace_leaf(&mut self, leaf_node : L, leaf_index: LeafNodeIndex){
+    pub fn just_replace_leaf(&mut self, leaf_node: L, leaf_index: LeafNodeIndex) {
         self.diff.replace_leaf(leaf_index, leaf_node.into());
     }
 
-    pub fn just_replace_parent(&mut self, parent_node : P, parent_index: ParentNodeIndex){
+    pub fn just_replace_parent(&mut self, parent_node: P, parent_index: ParentNodeIndex) {
         self.diff.replace_parent(parent_index, parent_node.into());
     }
 }
@@ -604,21 +610,19 @@ where
     }
 }
 
-
-impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA>{
+impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA> {
     pub fn decrypt_path_secret_from_update_path(
         &mut self,
-        crypto : &impl OpenMlsCrypto,
-        ciphersuite : Ciphersuite,
+        crypto: &impl OpenMlsCrypto,
         encrypted_path_secrets: &Vec<Vec<u8>>,
         updated_leaf_index: &LeafNodeIndex,
-        own_leaf_index : &LeafNodeIndex
-    ) -> PathSecret{
+        own_leaf_index: &LeafNodeIndex,
+    ) -> PathSecret {
         let path_position = self
-            .subtree_root_position(*updated_leaf_index, *own_leaf_index).expect("ici");
+            .subtree_root_position(*updated_leaf_index, *own_leaf_index)
+            .expect("ici");
 
         let encrypted_path_secret = encrypted_path_secrets.get(path_position).unwrap();
-
 
         // Get the copath node of the updated guy that is in our direct path, as well
         // as its position in our direct path.
@@ -630,10 +634,8 @@ impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA>{
             .resolution(subtree_root_copath_node_id, &HashSet::new())
             .into_iter()
             .map(|(_, node_ref)| match node_ref {
-                NodeReference::Leaf(leaf) => leaf.encryption_key().clone(),     //"encryption ley bit this is actually decryption keys, TODO faire une méthode spéciale"
-                NodeReference::Parent(parent) => {
-                    parent.encryption_key().clone()
-                }
+                NodeReference::Leaf(leaf) => leaf.encryption_key().clone(), //"encryption ley bit this is actually decryption keys, TODO faire une méthode spéciale"
+                NodeReference::Parent(parent) => parent.encryption_key().clone(),
             })
             .collect();
 
@@ -643,35 +645,35 @@ impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA>{
         let decryption_key = decryption_keys_candidates.get(0).unwrap();
 
         let path_secret = decryption_key
-            .decrypt(crypto, ciphersuite, encrypted_path_secret)
+            .decrypt(crypto, encrypted_path_secret)
             .unwrap();
 
         PathSecret::from(Secret::from_slice(&path_secret.as_slice()))
-
     }
 
-
-     pub fn decrypt_first_path_secret_from_update_path_with_own_key(
+    pub fn decrypt_first_path_secret_from_update_path_with_own_key(
         &mut self,
-        crypto : &impl OpenMlsCrypto,
-        ciphersuite : Ciphersuite,
+        crypto: &impl OpenMlsCrypto,
         encrypted_path_secrets: &Vec<Vec<u8>>,
-        own_leaf_index : LeafNodeIndex
-    ) -> PathSecret{
+        own_leaf_index: LeafNodeIndex,
+    ) -> PathSecret {
         let encrypted_path_secret = encrypted_path_secrets.get(0).unwrap();
 
         // this function is lonly used in a symmetric context: so encryption key = decryption key
-        let binding = self.diff.leaf(own_leaf_index).node().clone().expect("why is the leaf empty ?");
+        let binding = self
+            .diff
+            .leaf(own_leaf_index)
+            .node()
+            .clone()
+            .expect("why is the leaf empty ?");
         let decryption_key = binding.encryption_key();
 
         let path_secret = decryption_key
-            .decrypt(crypto, ciphersuite, encrypted_path_secret)
+            .decrypt(crypto, encrypted_path_secret)
             .unwrap();
 
         PathSecret::from(Secret::from_slice(&path_secret.as_slice()))
-
     }
-
 
     /// Generate a regeneration path, by deriving the path secret of each node
     pub fn generate_regeneration_path(
@@ -696,19 +698,22 @@ impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA>{
                     parent_index,
                     self.diff
                         .parent(parent_index)
-                        .node().clone()
+                        .node()
+                        .clone()
                         .expect("There should be a secret because we took the filtered direct path")
                         .derive_regeneration_secret(provider.crypto(), ciphersuite)
                         .expect("Derivation of the regeneration secret failed"),
                 )
             })
             .collect();
-            
-            ////////////////////////////////
+
+        ////////////////////////////////
         let regeneration_leaf = if is_including_leaf {
             Some(
-                self.diff.leaf(*leaf_node_index)
-                    .node().clone()
+                self.diff
+                    .leaf(*leaf_node_index)
+                    .node()
+                    .clone()
                     .expect("There should be a leaf at this index")
                     .derive_regeneration_secret(provider.crypto(), ciphersuite)
                     .expect("Derivation of secret failed"),
@@ -720,7 +725,6 @@ impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA>{
         (regeneration_leaf, path_regeneration)
     }
 
-
     pub fn absorb_regeneration_path(
         &mut self,
         provider: &impl OpenMlsProvider,
@@ -729,34 +733,74 @@ impl<'a> SumacTreeDiff<'a, OptionLeafNodeTMKA, OptionParentNodeTMKA>{
         own_leaf_node_index: Option<&LeafNodeIndex>,
         regeneration_leaf_secret: &Option<Secret>,
         regeneration_path: &Vec<(ParentNodeIndex, Secret)>,
-    ) -> Result<(Option<LeafNodeTMKA>, Vec<(ParentNodeIndex, PathSecret)>, Secret), LibraryError> {
+        replace_leaf_in_place: bool
+    ) -> Result<
+        (
+            Option<LeafNodeTMKA>,
+            Vec<(ParentNodeIndex, PathSecret)>,
+            Secret,
+        ),
+        LibraryError,
+    > {
         let path_indices = match own_leaf_node_index {
             Some(own_index) => self.filtered_common_direct_path(*own_index, *leaf_node_index),
             None => self.filtered_direct_path(*leaf_node_index),
         };
         assert_eq!(path_indices.len(), regeneration_path.len());
-        
-        let combined_path:Vec<(ParentNodeIndex, PathSecret)> = regeneration_path
+
+        let combined_path: Vec<(ParentNodeIndex, PathSecret)> = regeneration_path
             .iter()
             .map(|(parent_index, regeneration_secret)| {
-                let parent = self.diff.parent(*parent_index).node().clone().unwrap_or(ParentNodeTMKA::new_from_path_secret(provider.crypto(), ciphersuite, PathSecret::from(Secret::zero(ciphersuite)), None).unwrap());
-                 let new_parent = parent.absorb_regeneration_secret(provider.crypto(), ciphersuite, regeneration_secret.clone()).map_err(|err| LibraryError::unexpected_crypto_error(err)).unwrap();
+                let parent = self.diff.parent(*parent_index).node().clone().unwrap_or(
+                    ParentNodeTMKA::new_from_path_secret(
+                        provider.crypto(),
+                        ciphersuite,
+                        PathSecret::from(Secret::zero(ciphersuite)),
+                        None,
+                    )
+                    .unwrap(),
+                );
+                let new_parent = parent
+                    .absorb_regeneration_secret(
+                        provider.crypto(),
+                        ciphersuite,
+                        regeneration_secret.clone(),
+                    )
+                    .map_err(|err| LibraryError::unexpected_crypto_error(err))
+                    .unwrap();
                 *self.diff.parent_mut(*parent_index).node_mut() = new_parent.clone().into();
                 (*parent_index, new_parent.path_secret().clone().unwrap())
-            }).collect();
+            })
+            .collect();
 
         let final_secret = combined_path.last().unwrap().1.clone();
         let commit_secret = final_secret.derive_path_secret(provider.crypto(), ciphersuite)?;
 
-        let combined_leaf = regeneration_leaf_secret.clone().map(|regeneration_secret|{
-            let leaf = self.diff.leaf(*leaf_node_index).node().clone().expect("It is supposed to be a leaf here");
-            leaf.absorb_regeneration_secret(provider.crypto(), ciphersuite, regeneration_secret.clone()).map_err(|err| LibraryError::unexpected_crypto_error(err))
+        let combined_leaf = regeneration_leaf_secret.clone().map(|regeneration_secret| {
+            let leaf = self
+                .diff
+                .leaf(*leaf_node_index)
+                .node()
+                .clone()
+                .expect("It is supposed to be a leaf here");
+            leaf.absorb_regeneration_secret(
+                provider.crypto(),
+                ciphersuite,
+                regeneration_secret.clone(),
+            )
+            .map_err(|err| LibraryError::unexpected_crypto_error(err))
         });
 
-        let combined_leaf = combined_leaf.map(|r| r.map(Some)) // Result<X, E> → Result<Option<X>, E>
-        .unwrap_or(Ok(None))?; // If None, return Ok(None)
+        let combined_leaf = combined_leaf
+            .map(|r| r.map(Some)) // Result<X, E> → Result<Option<X>, E>
+            .unwrap_or(Ok(None))?; // If None, return Ok(None)
+
+        if replace_leaf_in_place{
+            self.just_replace_leaf(combined_leaf.clone().expect("Supposed to be a leaf here").into(), *leaf_node_index);
+        }
 
         Ok((combined_leaf, combined_path, commit_secret.secret()))
     }
-    
+
+
 }

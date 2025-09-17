@@ -1,5 +1,3 @@
-use std::fmt;
-
 use openmls_traits::{
     crypto::OpenMlsCrypto,
     random::OpenMlsRand,
@@ -7,12 +5,12 @@ use openmls_traits::{
     types::{Ciphersuite, HpkeCiphertext, HpkeKeyPair},
 };
 use tls_codec::VLBytes;
-use tls_codec::{Serialize, TlsSerialize, TlsSize};
+use tls_codec::{TlsSerialize, TlsSize};
 
 use crate::{
     ciphersuite::{hpke, HpkePrivateKey, HpkePublicKey},
     error::LibraryError,
-    prelude::{aead, AeadKey, AeadNonce, PathSecret, Secret},
+    prelude::{AeadKey, AeadNonce, PathSecret, Secret},
 };
 
 ////// Types for HPKE Encryption ////////
@@ -23,11 +21,6 @@ pub struct PkePublicKey {
 }
 
 impl PkePublicKey {
-    /// Return the internal [`HpkePublicKey`].
-    pub(crate) fn key(&self) -> &HpkePublicKey {
-        &self.key
-    }
-
     /// Return the internal [`HpkePublicKey`] as slice.
     pub fn as_slice(&self) -> &[u8] {
         self.key.as_slice()
@@ -105,7 +98,6 @@ impl PkePrivateKey {
         .map_err(|_| LibraryError::unexpected_crypto_error(CryptoError::HpkeDecryptionError))
         .map(|secret_bytes| PathSecret::from(Secret::from_slice(&secret_bytes)))
     }
-
 
     pub fn decrypt_raw(
         &self,
@@ -225,7 +217,7 @@ impl KeyPairRef<PkePublicKey, PkePrivateKey> for PkeKeyPair {
 }
 
 // This is just to use the same abstraction for all trees. It is not particularly meaningful
-impl KeyPairRef<SymmetricKey, SymmetricKey> for SymmetricKey{
+impl KeyPairRef<SymmetricKey, SymmetricKey> for SymmetricKey {
     fn public_key(&self) -> &SymmetricKey {
         &self
     }
@@ -245,25 +237,14 @@ pub struct SymmetricKey {
 pub(crate) type AeadCiphertext = Vec<u8>;
 
 impl SymmetricKey {
-    /// Return the internal [`AeadKey`].
-    pub(crate) fn key(&self) -> &AeadKey {
-        &self.key
-    }
-
     /// Encrypt to this SK public key.
     pub fn encrypt(
         &self,
         crypto: &impl OpenMlsCrypto,
-        ciphersuite: Ciphersuite,
         plaintext: &[u8],
     ) -> Result<AeadCiphertext, LibraryError> {
         self.key
-            .aead_seal(
-                crypto,
-                plaintext,
-                &[],
-                &AeadNonce::default()
-            )
+            .aead_seal(crypto, plaintext, &[], &AeadNonce::default())
             .map_err(|err| LibraryError::unexpected_crypto_error(err))
     }
 
@@ -271,16 +252,10 @@ impl SymmetricKey {
     pub fn decrypt(
         &self,
         crypto: &impl OpenMlsCrypto,
-        ciphersuite: Ciphersuite,
         ciphertext: &AeadCiphertext,
     ) -> Result<AeadCiphertext, LibraryError> {
         self.key
-            .aead_open(
-                crypto,
-                ciphertext.as_slice(),
-                &[],
-                &AeadNonce::default(),
-            )
+            .aead_open(crypto, ciphertext.as_slice(), &[], &AeadNonce::default())
             .map_err(|err| LibraryError::unexpected_crypto_error(err))
     }
 
@@ -300,7 +275,6 @@ impl SymmetricKey {
             .map_err(|e| LibraryError::unexpected_crypto_error(e))
     }
 
-
     pub fn derive_from_path_secret(
         crypto: &impl OpenMlsCrypto,
         ciphersuite: Ciphersuite,
@@ -319,21 +293,24 @@ impl SymmetricKey {
             .map_err(|e| LibraryError::unexpected_crypto_error(e))
     }
 
-    pub fn zero(ciphersuite : Ciphersuite) -> Self{
-        Self { key: AeadKey::from_secret(Secret::zero(ciphersuite), ciphersuite) }
+    pub fn zero(ciphersuite: Ciphersuite) -> Self {
+        Self {
+            key: AeadKey::from_secret(Secret::zero(ciphersuite), ciphersuite),
+        }
     }
 
-    pub fn as_slice(&self) -> &[u8]{
+    pub fn as_slice(&self) -> &[u8] {
         self.key.as_slice()
-    } 
-
-    pub fn from_vec(vec: Vec<u8>, ciphersuite : Ciphersuite) -> Self {
-        Self { key: AeadKey{
-            aead_mode: ciphersuite.aead_algorithm(),
-            value: vec.into(),
-        } }
     }
 
+    pub fn from_vec(vec: Vec<u8>, ciphersuite: Ciphersuite) -> Self {
+        Self {
+            key: AeadKey {
+                aead_mode: ciphersuite.aead_algorithm(),
+                value: vec.into(),
+            },
+        }
+    }
 }
 
 impl From<AeadKey> for SymmetricKey {
@@ -341,7 +318,6 @@ impl From<AeadKey> for SymmetricKey {
         Self { key }
     }
 }
-
 
 impl From<(SymmetricKey, SymmetricKey)> for SymmetricKey {
     fn from(value: (SymmetricKey, SymmetricKey)) -> Self {

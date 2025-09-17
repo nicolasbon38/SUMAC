@@ -40,7 +40,7 @@ pub trait OptionNode: Default{
 
 
 
-pub(crate) trait Leaf: ConcreteNode{}
+pub trait Leaf: ConcreteNode{}
 
 pub trait Parent: ConcreteNode + Sized{
     fn unmerged_leaves(&self) -> &[LeafNodeIndex];

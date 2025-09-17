@@ -34,11 +34,11 @@ impl Signable for KeyPackageTbsPayload {
 #[derive(Clone)]
 pub struct KeyPackage {
     payload: KeyPackageTbsPayload,
-    signature: Signature,
+    _signature: Signature,
 }
 impl SignedStruct<KeyPackageTbsPayload> for KeyPackage{
     fn from_payload(payload: KeyPackageTbsPayload, signature: Signature) -> Self {
-        Self { payload, signature }
+        Self { payload, _signature: signature }
 
     }
 }
