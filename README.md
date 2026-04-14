@@ -1,4 +1,4 @@
-This is an implementation for SUMAC. It relies on `openmls`, an implementation of the MLS protocol. We extended this library with the module `tree_sumac`, which generaically handles all the low-level tree operations of SUMAC. The high-level API of SUMAC can be found in `sumac_rs`
+This is an implementation for SUMAC. It relies on `openmls`, an implementation of the MLS protocol. We extended this library with the module `tree_sumac`, which generically handles all the low-level tree operations of SUMAC. The high-level API of SUMAC can be found in `sumac_rs`
 
 
 # Rust installation
@@ -22,6 +22,4 @@ The results will be displayed in JSON format under `target/criterion` folder. To
 Depending on your setup, benches can take a while to run. Every operation is run a hundred times (including a setup phase of construction of a random group), with the positions of committers and target of each operation randomized.
 
 
-**Disclaimer**: This software is a prototype implementation. Do not use it in production environments.
-
-For Usenix Reviewers, the last commit at submission time was fa0bc9770d00399b89519a413471b9ff2501bf2e. 
+**Disclaimer**: This software is a prototype implementation. Do not use it in production environments
