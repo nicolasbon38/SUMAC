@@ -200,7 +200,7 @@ fn benchmark_add_user(c: &mut Criterion) {
     let mut group = c.benchmark_group("add-user_sumac");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
-    
+
 
     let mut rng = rng();
     let provider = setup_provider();
@@ -500,7 +500,7 @@ fn benchmark_add_admin(c: &mut Criterion) {
     let mut group = c.benchmark_group("add-admin_sumac");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
-    
+
 
     let mut rng: ThreadRng = rng();
     let provider = setup_provider();
@@ -798,7 +798,7 @@ fn benchmark_update_user(c: &mut Criterion) {
     let mut group = c.benchmark_group("update-user_sumac");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
-    
+
 
     let mut rng: ThreadRng = rng();
     let provider = setup_provider();
@@ -1122,7 +1122,7 @@ fn benchmark_remove_user(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove-user_sumac");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
-    
+
 
     let mut rng: ThreadRng = rng();
     let provider = setup_provider();
@@ -1357,7 +1357,7 @@ fn benchmark_remove_admin(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove-admin_sumac");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
-    
+
 
     let mut rng: ThreadRng = rng();
     let provider = setup_provider();
@@ -1610,7 +1610,7 @@ fn benchmark_update_admin(c: &mut Criterion) {
     let mut group = c.benchmark_group("update-admin_sumac");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
-    
+
 
     let mut rng: ThreadRng = rng();
     let provider = setup_provider();
@@ -1828,11 +1828,11 @@ fn benchmark_update_admin(c: &mut Criterion) {
 
 criterion_group!(
     bench_sumac,
-    // benchmark_remove_admin,
-    // benchmark_add_admin,
-    // benchmark_update_admin,
+    benchmark_remove_admin,
+    benchmark_add_admin,
+    benchmark_update_admin,
     benchmark_add_user,
-    // benchmark_update_user,
-    // benchmark_remove_user,
+    benchmark_update_user,
+    benchmark_remove_user,
 );
 criterion_main!(bench_sumac);
