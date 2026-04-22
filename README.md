@@ -15,7 +15,7 @@ cd sumac_rs
 cargo bench
 ```
 
-will run all the benchmarks for SUMAC (functions `add-user`, `remove-user`, `update-user` and `add-admin`) and for the simple CGKA (`add-user`, `remove-user` and `update-user`).
+will run all the benchmarks for SUMAC (functions `add-user`, `remove-user`, `update-user` and `add-admin`, `remove-admin` and `update_admin`) and for the simple CGKA (`add-user`, `remove-user` and `update-user`).
 
 The results will be displayed in JSON format under `target/criterion` folder. To get human-readable format, you can run the `export_latex.py` script to produce the LateX tables of the paper.
 
@@ -23,3 +23,8 @@ Depending on your setup, benches can take a while to run. Every operation is run
 
 
 **Disclaimer**: This software is a prototype implementation. Do not use it in production environments
+
+
+## Additional results
+
+For additional reproducibility, an excel file computing the costs in memory and communication (and comparing with the state of the art) is also provided at the root.
